@@ -32,7 +32,7 @@ docker compose --profile with-db up -d --build
 
 Use o exemplo `deploy/nginx-host.conf.example`:
 
-- `/`     → `127.0.0.1:8081` (front) — **não use 8080** se Vaultwarden já estiver nela
+- `/`     → `127.0.0.1:5376` (front) — evite 8080/8081 se já estiverem ocupadas
 - `/api/` → `127.0.0.1:8000` (API)
 
 ```bash
