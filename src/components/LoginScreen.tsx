@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../auth/AuthContext';
 import { DiRomaLogo } from './DiRomaLogo';
 import { Settings2 } from 'lucide-react';
@@ -10,9 +10,16 @@ interface LoginScreenProps {
 const FUNDO_SRC = '/img/fundo.jpg';
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenSettings }) => {
-  const { loginWithMicrosoft, secureContext } = useAuth();
+  const { loginWithMicrosoft, secureContext, authError, clearAuthError } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (authError) {
+      setError(authError);
+      clearAuthError();
+    }
+  }, [authError, clearAuthError]);
 
   const handleMicrosoftLogin = async () => {
     setIsLoading(true);

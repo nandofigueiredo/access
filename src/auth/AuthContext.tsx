@@ -1,6 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { MsalProvider, useMsal } from '@azure/msal-react';
-import { PublicClientApplication, InteractionStatus } from '@azure/msal-browser';
+import {
+  AccountInfo,
+  InteractionStatus,
+  PublicClientApplication,
+} from '@azure/msal-browser';
 import { UserProfile, MsalConfigState } from '../types';
 import {
   createMsalInstance,
@@ -16,6 +20,75 @@ import { acquireApiAccessToken, setAccessTokenProvider, setMsalInstance, api } f
 import { AccessRole, DEMO_USERS } from './roles';
 
 const CATALOG_STORAGE_KEY = 'portal_ti_system_catalog_v1';
+const SESSION_KEY = 'onboarding_diroma_session';
+const MSAL_BOOT_ERROR_KEY = 'msal_boot_error';
+
+/** Singleton — evita Strict Mode consumir o ?code= OAuth duas vezes */
+let msalBootPromise: Promise<PublicClientApplication> | null = null;
+
+/** Lê #error=... / ?error=... que o Entra devolve no redirect (ex.: AADSTS500011). */
+function captureEntraRedirectError(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const hash = window.location.hash?.replace(/^#/, '') || '';
+    const search = window.location.search?.replace(/^\?/, '') || '';
+    const params = new URLSearchParams(hash || search);
+    const code = params.get('error');
+    const desc = params.get('error_description');
+    if (!code && !desc) return null;
+
+    const decoded = desc ? decodeURIComponent(desc.replace(/\+/g, ' ')) : code || 'erro Entra ID';
+    // Limpa a URL para não reprocessar o erro a cada reload
+    const clean = `${window.location.origin}${window.location.pathname}`;
+    window.history.replaceState({}, document.title, clean);
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+async function bootMsalInstance(): Promise<PublicClientApplication> {
+  if (msalBootPromise) return msalBootPromise;
+
+  msalBootPromise = (async () => {
+    const entraErr = captureEntraRedirectError();
+    if (entraErr) {
+      try {
+        sessionStorage.setItem(MSAL_BOOT_ERROR_KEY, entraErr);
+      } catch {
+        // ignore
+      }
+    }
+
+    clearMsalInteractionLocks();
+    const pca = createMsalInstance(getStoredMsalSettings());
+    await pca.initialize();
+
+    try {
+      const result = await pca.handleRedirectPromise();
+      if (result?.account) {
+        pca.setActiveAccount(result.account);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('MSAL redirect no boot:', err);
+      try {
+        sessionStorage.setItem(MSAL_BOOT_ERROR_KEY, message);
+      } catch {
+        // ignore
+      }
+    }
+
+    const accounts = pca.getAllAccounts();
+    if (!pca.getActiveAccount() && accounts.length > 0) {
+      pca.setActiveAccount(accounts[0]);
+    }
+
+    return pca;
+  })();
+
+  return msalBootPromise;
+}
 
 /** Papel cadastrado em Administração → Usuários & Perfis (por e-mail). */
 export function lookupCatalogRole(email: string): AccessRole | null {
@@ -60,16 +133,13 @@ export function resolveUserRole(email: string): AccessRole {
   const normalized = email.trim().toLowerCase();
   const local = normalized.split('@')[0] || '';
 
-  // 1) Admin fixo — NÃO pode ser sobrescrito pelo catálogo
   if (ADMIN_EMAILS.has(normalized) || local.startsWith('n3.') || local.startsWith('admin.n3')) {
     return 'admin';
   }
 
-  // 2) Papel cadastrado em Administração → Usuários & Perfis
   const fromCatalog = lookupCatalogRole(normalized);
   if (fromCatalog) return fromCatalog;
 
-  // 3) Heurística por prefixo do e-mail
   if (local.startsWith('rh.') || local.includes('.rh')) return 'rh';
   if (local.startsWith('gestor.') || local.startsWith('manager.')) return 'gestor';
   if (local.startsWith('ti.') || local.startsWith('sd.') || local.startsWith('servicedesk.')) {
@@ -82,25 +152,20 @@ export function resolveUserRole(email: string): AccessRole {
 interface AuthContextType {
   user: UserProfile | null;
   loginWithMicrosoft: () => Promise<void>;
-  /** Login local por perfil (requer VITE_ENABLE_DEMO_LOGIN=true) */
   loginAsProfile: (role: AccessRole) => Promise<void>;
   logout: () => void;
   msalSettings: MsalConfigState;
   updateMsalSettings: (settings: MsalConfigState) => void;
   getAccessToken: () => Promise<string | null>;
   secureContext: boolean;
+  authError: string | null;
+  clearAuthError: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const SESSION_KEY = 'onboarding_diroma_session';
-
-function buildProfileFromAccount(account: {
-  name?: string;
-  username: string;
-  tenantId?: string;
-}): UserProfile {
-  const email = account.username.toLowerCase();
+function buildProfileFromAccount(account: AccountInfo): UserProfile {
+  const email = (account.username || '').toLowerCase();
   const role = resolveUserRole(email);
   return {
     name: account.name || account.username,
@@ -123,11 +188,16 @@ function buildProfileFromAccount(account: {
   };
 }
 
+function pickAccount(accounts: AccountInfo[], instance: PublicClientApplication): AccountInfo | null {
+  return instance.getActiveAccount() || accounts[0] || null;
+}
+
 interface AuthProviderInnerProps {
   children: ReactNode;
   msalInstance: PublicClientApplication;
   msalSettings: MsalConfigState;
   setMsalSettings: React.Dispatch<React.SetStateAction<MsalConfigState>>;
+  bootError: string | null;
 }
 
 const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
@@ -135,23 +205,42 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
   msalInstance,
   msalSettings,
   setMsalSettings,
+  bootError,
 }) => {
   const { instance, accounts, inProgress } = useMsal();
-  const [user, setUser] = useState<UserProfile | null>(null);
+  const [user, setUser] = useState<UserProfile | null>(() => {
+    const account = pickAccount(msalInstance.getAllAccounts(), msalInstance);
+    return account ? buildProfileFromAccount(account) : null;
+  });
+  const [authError, setAuthError] = useState<string | null>(bootError);
 
+  // Sincroniza conta MSAL → user (e valida domínio)
   useEffect(() => {
-    // Contas já resolvidas no AuthProvider via handleRedirectPromise
-    if (accounts.length > 0) {
-      setUser(buildProfileFromAccount(accounts[0]));
-      localStorage.removeItem(SESSION_KEY);
+    const account = pickAccount(accounts, instance);
+    if (!account) return;
+
+    const email = (account.username || '').toLowerCase();
+    const domain = email.split('@')[1];
+    if (domain && domain !== 'diroma.com.br') {
+      setAuthError('Acesso restrito a contas @diroma.com.br');
+      setUser(null);
+      instance
+        .logoutRedirect({ postLogoutRedirectUri: window.location.origin })
+        .catch(() => undefined);
+      return;
     }
-  }, [accounts]);
+
+    instance.setActiveAccount(account);
+    setUser(buildProfileFromAccount(account));
+    localStorage.removeItem(SESSION_KEY);
+    setAuthError(null);
+  }, [accounts, instance]);
 
   useEffect(() => {
     setMsalInstance(msalInstance);
     setAccessTokenProvider(async () => {
       if (!user || user.isDemo) return null;
-      return acquireApiAccessToken(accounts[0] || null);
+      return acquireApiAccessToken(accounts[0] || msalInstance.getActiveAccount());
     });
   }, [msalInstance, accounts, user]);
 
@@ -164,7 +253,6 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
         if (cancelled || !me?.email) return;
         setUser((prev) => {
           if (!prev) return prev;
-          // Admin fixo nunca é rebaixado pelo /users/me
           const apiRole = (me.role as AccessRole) || prev.role;
           const nextRole = ADMIN_EMAILS.has(prev.email.toLowerCase()) ? 'admin' : apiRole;
           if (
@@ -186,7 +274,7 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
           };
         });
       } catch {
-        // API offline
+        // API offline — mantém sessão MSAL
       }
     })();
     return () => {
@@ -196,7 +284,7 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
 
   const getAccessToken = async () => {
     if (isPlaceholderClientId(msalSettings.clientId) || user?.isDemo) return null;
-    return acquireApiAccessToken(accounts[0] || null);
+    return acquireApiAccessToken(accounts[0] || msalInstance.getActiveAccount());
   };
 
   const loginAsProfile = async (role: AccessRole) => {
@@ -215,7 +303,7 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
     const missingEntra = isPlaceholderClientId(msalSettings.clientId) || !msalSettings.configured;
 
     if (missingEntra && demoOk) {
-      throw new Error('Selecione um perfil acima e use “Entrar como…” (Entra ID ainda não configurado).');
+      throw new Error('Entra ID ainda não configurado. Ative VITE_ENABLE_DEMO_LOGIN ou configure o Client ID.');
     }
 
     if (missingEntra) {
@@ -229,6 +317,8 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
     }
 
     try {
+      setAuthError(null);
+      sessionStorage.removeItem(MSAL_BOOT_ERROR_KEY);
       await msalInstance.initialize();
       await msalInstance.loginRedirect(loginRequest);
     } catch (err: unknown) {
@@ -260,7 +350,7 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
     localStorage.removeItem(SESSION_KEY);
     localStorage.removeItem('onboarding_demo_user');
     setUser(null);
-    if (msalSettings.configured && accounts.length > 0) {
+    if (msalSettings.configured && (accounts.length > 0 || msalInstance.getAllAccounts().length > 0)) {
       instance
         .logoutRedirect({ postLogoutRedirectUri: window.location.origin })
         .catch((err) => console.warn('Logout error:', err));
@@ -283,6 +373,8 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
         updateMsalSettings,
         getAccessToken,
         secureContext: true,
+        authError,
+        clearAuthError: () => setAuthError(null),
       }}
     >
       {children}
@@ -339,6 +431,8 @@ const AuthProviderInsecure: React.FC<{ children: ReactNode }> = ({ children }) =
         },
         getAccessToken: async () => null,
         secureContext: false,
+        authError: null,
+        clearAuthError: () => undefined,
       }}
     >
       {children}
@@ -352,6 +446,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [msalInstance, setMsalInstanceState] = useState<PublicClientApplication | null>(null);
   const [msalReady, setMsalReady] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
+  const [bootError, setBootError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!secure) {
@@ -362,19 +457,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     let cancelled = false;
     (async () => {
       try {
-        clearMsalInteractionLocks();
-        const pca = createMsalInstance(getStoredMsalSettings());
-        // MSAL Browser v3+ exige initialize() antes de qualquer API
-        await pca.initialize();
-        // Consome o código OAuth na própria aba (sem popup)
-        await pca.handleRedirectPromise().catch((err) => {
-          console.warn('MSAL redirect no boot:', err);
-        });
-        if (cancelled) return;
-        setMsalInstanceState(pca);
-        setMsalReady(true);
+        const pca = await bootMsalInstance();
+        const storedErr = sessionStorage.getItem(MSAL_BOOT_ERROR_KEY);
+        if (storedErr) {
+          sessionStorage.removeItem(MSAL_BOOT_ERROR_KEY);
+          if (!cancelled) setBootError(storedErr);
+        }
+        if (!cancelled) {
+          setMsalInstanceState(pca);
+          setMsalReady(true);
+        }
       } catch (err) {
         console.error('Falha ao inicializar MSAL:', err);
+        // permite retry em novo carregamento
+        msalBootPromise = null;
         if (!cancelled) {
           setInitError(err instanceof Error ? err.message : 'Falha ao inicializar Microsoft Entra ID');
           setMsalReady(true);
@@ -414,6 +510,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         msalInstance={msalInstance}
         msalSettings={msalSettings}
         setMsalSettings={setMsalSettings}
+        bootError={bootError}
       >
         {children}
       </AuthProviderInner>

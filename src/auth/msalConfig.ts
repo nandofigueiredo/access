@@ -30,14 +30,20 @@ function envSettings(): MsalConfigState {
 
 export const getStoredMsalSettings = (): MsalConfigState => {
   const fromEnv = envSettings();
+  // Build com Client ID real sempre vence localStorage antigo (evita loop de login em prod)
+  if (fromEnv.configured) {
+    return {
+      ...fromEnv,
+      redirectUri:
+        typeof window !== 'undefined' && window.location.hostname !== 'localhost'
+          ? window.location.origin
+          : fromEnv.redirectUri || (typeof window !== 'undefined' ? window.location.origin : ''),
+    };
+  }
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored) {
     try {
       const parsed = JSON.parse(stored) as MsalConfigState;
-      // localStorage antigo sem Client ID real não pode sobrescrever o build
-      if (isPlaceholderClientId(parsed.clientId) && fromEnv.configured) {
-        return fromEnv;
-      }
       const clientId = parsed.clientId || fromEnv.clientId;
       return {
         clientId,
@@ -112,6 +118,8 @@ export const createMsalInstance = (settings: MsalConfigState = getStoredMsalSett
       authority: `https://login.microsoftonline.com/${settings.tenantId || 'common'}`,
       redirectUri,
       postLogoutRedirectUri: redirectUri,
+      // Evita segundo redirect após o login (loop → tela de login)
+      navigateToLoginRequestUrl: false,
     },
     cache: {
       cacheLocation: 'localStorage',

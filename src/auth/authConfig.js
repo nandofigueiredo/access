@@ -9,8 +9,13 @@
 const clientId = import.meta.env.VITE_AZURE_CLIENT_ID || '00000000-0000-0000-0000-000000000000';
 const tenantId = import.meta.env.VITE_AZURE_TENANT_ID || 'common';
 const redirectUri = import.meta.env.VITE_AZURE_REDIRECT_URI || window.location.origin;
-const apiScope =
-  import.meta.env.VITE_AZURE_API_SCOPE || 'User.Read';
+/** Escopo da API própria — só use após "Expose an API" no Entra (senão AADSTS500011). */
+const rawApiScope = (import.meta.env.VITE_AZURE_API_SCOPE || '').trim();
+const hasCustomApiScope =
+  Boolean(rawApiScope) &&
+  rawApiScope !== 'User.Read' &&
+  !rawApiScope.startsWith('openid') &&
+  !rawApiScope.startsWith('profile');
 
 export const msalConfig = {
   auth: {
@@ -18,7 +23,7 @@ export const msalConfig = {
     authority: `https://login.microsoftonline.com/${tenantId}`,
     redirectUri,
     postLogoutRedirectUri: redirectUri,
-    navigateToLoginRequestUrl: true,
+    navigateToLoginRequestUrl: false,
   },
   cache: {
     cacheLocation: 'localStorage',
@@ -29,24 +34,22 @@ export const msalConfig = {
   },
 };
 
-/** Scopes para login interativo (perfil + escopo da API própria). */
+/**
+ * Login interativo — apenas Microsoft Graph / OIDC.
+ * NÃO incluir api://... aqui: se a API não estiver exposta no tenant, o Entra
+ * devolve AADSTS500011 e o login falha por completo.
+ */
 export const loginRequest = {
-  scopes: [
-    'openid',
-    'profile',
-    'email',
-    'User.Read',
-    // Inclui o escopo da API para o token silencioso funcionar sem popup
-    ...(apiScope && apiScope !== 'User.Read' ? [apiScope] : []),
-  ],
+  scopes: ['openid', 'profile', 'email', 'User.Read'],
 };
 
 /**
- * Scopes para obter access_token aceito pela API FastAPI.
- * Cadastre este escopo exposto na App Registration (Expose an API).
+ * Token para a API FastAPI (silent).
+ * Com VITE_AZURE_API_SCOPE vazio → User.Read (Graph); útil com AUTH_DISABLED.
+ * Com scope api://... → exige "Expose an API" + consent no Entra.
  */
 export const apiTokenRequest = {
-  scopes: [apiScope],
+  scopes: [hasCustomApiScope ? rawApiScope : 'User.Read'],
 };
 
 /** Scopes opcionais do Microsoft Graph (foto / perfil estendido). */
