@@ -15,12 +15,41 @@ import {
 import { acquireApiAccessToken, setAccessTokenProvider, setMsalInstance, api } from '../api/client';
 import { AccessRole, DEMO_USERS } from './roles';
 
+const CATALOG_STORAGE_KEY = 'portal_ti_system_catalog_v1';
+
+/** Papel cadastrado em Administração → Usuários & Perfis (por e-mail). */
+export function lookupCatalogRole(email: string): AccessRole | null {
+  try {
+    const raw = localStorage.getItem(CATALOG_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      users?: Array<{ active?: boolean; meta?: { email?: string; role?: string } }>;
+    };
+    const users = parsed?.users;
+    if (!Array.isArray(users)) return null;
+    const normalized = email.trim().toLowerCase();
+    const match = users.find(
+      (u) => u.active !== false && String(u.meta?.email || '').toLowerCase() === normalized
+    );
+    const role = match?.meta?.role;
+    if (
+      role === 'admin' ||
+      role === 'ti' ||
+      role === 'rh' ||
+      role === 'gestor' ||
+      role === 'viewer'
+    ) {
+      return role;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 /**
  * Admin (N3) — somente e-mails explicitamente listados / prefixo n3.
- * Service Desk — ti. / sd.
- * RH — rh.
- * Gestor — gestor. / manager.
- * Demais @diroma → viewer (sem elevação automática).
+ * Prioridade: cadastro em Usuários & Perfis → heurística de e-mail.
  */
 export const ADMIN_EMAILS = new Set([
   'luis.figueiredo@diroma.com.br',
@@ -29,6 +58,9 @@ export const ADMIN_EMAILS = new Set([
 
 export function resolveUserRole(email: string): AccessRole {
   const normalized = email.trim().toLowerCase();
+  const fromCatalog = lookupCatalogRole(normalized);
+  if (fromCatalog) return fromCatalog;
+
   const local = normalized.split('@')[0] || '';
 
   if (ADMIN_EMAILS.has(normalized) || local.startsWith('n3.') || local.startsWith('admin.n3')) {

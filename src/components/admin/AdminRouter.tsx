@@ -62,7 +62,17 @@ export const AdminRouter: React.FC<Props> = ({ page, addToast, tickets, onOpenEn
       );
 
     case 'admin-users':
-      return crud('users', 'Usuários & Perfis', 'Cadastro local de operadores (admin, RH, TI, gestor).');
+      return (
+        <CatalogCrudPage
+          title="Usuários & Perfis"
+          subtitle="Cadastre operadores e selecione o perfil de acesso (Admin N3, Service Desk, RH, Gestor ou Visualizador)."
+          items={catalog.users}
+          onSave={(item) => upsertItem('users', item)}
+          onDelete={(id) => removeItem('users', id)}
+          addToast={addToast}
+          enableAccessRole
+        />
+      );
     case 'admin-units':
       return crud('units', 'Unidades / Entidades', 'Locais físicos e entidades do Grupo diRoma.');
     case 'admin-managers':

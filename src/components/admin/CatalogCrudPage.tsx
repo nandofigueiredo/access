@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Plus, Pencil, Trash2, Search, ToggleLeft, ToggleRight } from 'lucide-react';
 import { CatalogItem } from '../../types/catalog';
 import { ToastMessage } from '../../types';
+import { ACCESS_PROFILES, AccessRole, getProfile, roleLabel } from '../../auth/roles';
 
 interface CatalogCrudPageProps {
   title: string;
@@ -10,12 +11,26 @@ interface CatalogCrudPageProps {
   onSave: (item: CatalogItem) => void;
   onDelete: (id: string) => void;
   addToast: (toast: Omit<ToastMessage, 'id'>) => void;
-  /** Campos extras opcionais no formulário (description) */
   showDescription?: boolean;
+  /** Cadastro de operadores com seleção de perfil de acesso */
+  enableAccessRole?: boolean;
 }
 
 function newId() {
   return `cat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function roleFromMeta(item: CatalogItem): AccessRole {
+  const raw = item.meta?.role;
+  if (typeof raw === 'string' && ACCESS_PROFILES.some((p) => p.role === raw)) {
+    return raw as AccessRole;
+  }
+  return 'viewer';
+}
+
+function emailFromMeta(item: CatalogItem): string {
+  const raw = item.meta?.email;
+  return typeof raw === 'string' ? raw : '';
 }
 
 export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
@@ -26,17 +41,30 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
   onDelete,
   addToast,
   showDescription = true,
+  enableAccessRole = false,
 }) => {
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<CatalogItem | null>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState<AccessRole>('ti');
   const [active, setActive] = useState(true);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return [...items]
-      .filter((i) => !q || i.name.toLowerCase().includes(q) || (i.description || '').toLowerCase().includes(q))
+      .filter((i) => {
+        if (!q) return true;
+        const mail = emailFromMeta(i).toLowerCase();
+        const perfil = roleLabel(roleFromMeta(i)).toLowerCase();
+        return (
+          i.name.toLowerCase().includes(q) ||
+          (i.description || '').toLowerCase().includes(q) ||
+          mail.includes(q) ||
+          perfil.includes(q)
+        );
+      })
       .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
   }, [items, search]);
 
@@ -44,6 +72,8 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
     setEditing(null);
     setName('');
     setDescription('');
+    setEmail('');
+    setRole('ti');
     setActive(true);
   };
 
@@ -51,6 +81,8 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
     setEditing(item);
     setName(item.name);
     setDescription(item.description || '');
+    setEmail(emailFromMeta(item));
+    setRole(roleFromMeta(item));
     setActive(item.active);
   };
 
@@ -60,19 +92,54 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
       addToast({ type: 'error', title: 'Nome obrigatório', message: 'Informe o nome do item.' });
       return;
     }
+    if (enableAccessRole) {
+      const normalizedEmail = email.trim().toLowerCase();
+      if (!normalizedEmail || !normalizedEmail.includes('@')) {
+        addToast({
+          type: 'error',
+          title: 'E-mail obrigatório',
+          message: 'Informe o e-mail corporativo do operador.',
+        });
+        return;
+      }
+      const duplicate = items.find(
+        (i) =>
+          i.id !== editing?.id &&
+          emailFromMeta(i).toLowerCase() === normalizedEmail
+      );
+      if (duplicate) {
+        addToast({
+          type: 'error',
+          title: 'E-mail já cadastrado',
+          message: `"${normalizedEmail}" já está vinculado a ${duplicate.name}.`,
+        });
+        return;
+      }
+    }
+
     const payload: CatalogItem = {
       id: editing?.id ?? newId(),
       name: name.trim(),
-      description: description.trim() || undefined,
+      description: enableAccessRole
+        ? roleLabel(role)
+        : description.trim() || undefined,
       active,
       sortOrder: editing?.sortOrder ?? items.length + 1,
-      meta: editing?.meta,
+      meta: enableAccessRole
+        ? {
+            ...(editing?.meta || {}),
+            email: email.trim().toLowerCase(),
+            role,
+          }
+        : editing?.meta,
     };
     onSave(payload);
     addToast({
       type: 'success',
       title: editing ? 'Item atualizado' : 'Item cadastrado',
-      message: `"${payload.name}" salvo com sucesso.`,
+      message: enableAccessRole
+        ? `"${payload.name}" · perfil ${roleLabel(role)}.`
+        : `"${payload.name}" salvo com sucesso.`,
     });
     openCreate();
   };
@@ -80,6 +147,8 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
   const toggleActive = (item: CatalogItem) => {
     onSave({ ...item, active: !item.active });
   };
+
+  const selectedProfile = getProfile(role);
 
   return (
     <div className="space-y-3">
@@ -103,17 +172,65 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
             {editing ? 'Editar item' : 'Novo cadastro'}
           </h3>
           <div>
-            <label className="block text-[11px] font-semibold text-slate-500 mb-1">Nome *</label>
+            <label className="block text-[11px] font-semibold text-slate-600 mb-1">Nome *</label>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="w-full border border-slate-200 rounded-sm px-2.5 py-2 text-[13px] focus:outline-none focus:border-[#1890ff]"
-              placeholder="Ex.: Financeiro"
+              placeholder={enableAccessRole ? 'Ex.: Carlos Tremea' : 'Ex.: Financeiro'}
             />
           </div>
-          {showDescription && (
+
+          {enableAccessRole && (
+            <>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                  E-mail corporativo *
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full border border-slate-200 rounded-sm px-2.5 py-2 text-[13px] focus:outline-none focus:border-[#1890ff]"
+                  placeholder="nome.sobrenome@diroma.com.br"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                  Perfil de acesso *
+                </label>
+                <select
+                  value={role}
+                  onChange={(e) => setRole(e.target.value as AccessRole)}
+                  className="w-full border border-slate-200 rounded-sm px-2.5 py-2 text-[13px] focus:outline-none focus:border-[#1890ff] bg-white"
+                >
+                  {ACCESS_PROFILES.map((p) => (
+                    <option key={p.role} value={p.role}>
+                      {p.title} — {p.badge}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-[11px] text-slate-500 leading-snug">
+                  {selectedProfile.description}
+                </p>
+                <ul className="mt-1.5 space-y-0.5">
+                  {selectedProfile.accessSummary.map((line) => (
+                    <li key={line} className="text-[11px] text-slate-600 flex gap-1.5">
+                      <span
+                        className="mt-1.5 w-1 h-1 rounded-full shrink-0"
+                        style={{ background: selectedProfile.color }}
+                      />
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </>
+          )}
+
+          {showDescription && !enableAccessRole && (
             <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">Descrição</label>
+              <label className="block text-[11px] font-semibold text-slate-600 mb-1">Descrição</label>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -124,7 +241,7 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
           )}
           <label className="flex items-center gap-2 text-[12px] text-slate-700">
             <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="accent-[#1890ff]" />
-            Ativo (visível nos formulários)
+            Ativo {enableAccessRole ? '(pode acessar o portal)' : '(visível nos formulários)'}
           </label>
           <div className="flex gap-2 pt-1">
             <button type="submit" className="px-3 py-1.5 text-[12px] font-semibold text-white bg-[#1890ff] hover:bg-[#096dd9]">
@@ -144,7 +261,7 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Buscar..."
+              placeholder={enableAccessRole ? 'Buscar por nome, e-mail ou perfil...' : 'Buscar...'}
               className="flex-1 text-[12px] outline-none"
             />
             <span className="text-[11px] text-slate-400">{filtered.length} itens</span>
@@ -154,7 +271,14 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
               <thead>
                 <tr>
                   <th className="py-2.5 px-3">Nome</th>
-                  <th className="py-2.5 px-3">Descrição</th>
+                  {enableAccessRole ? (
+                    <>
+                      <th className="py-2.5 px-3">E-mail</th>
+                      <th className="py-2.5 px-3">Perfil</th>
+                    </>
+                  ) : (
+                    <th className="py-2.5 px-3">Descrição</th>
+                  )}
                   <th className="py-2.5 px-3">Status</th>
                   <th className="py-2.5 px-3 text-right">Ações</th>
                 </tr>
@@ -162,42 +286,62 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="py-10 text-center text-slate-400">Nenhum registro.</td>
+                    <td colSpan={enableAccessRole ? 5 : 4} className="py-10 text-center text-slate-400">
+                      Nenhum registro.
+                    </td>
                   </tr>
                 ) : (
-                  filtered.map((item) => (
-                    <tr key={item.id}>
-                      <td className="py-2.5 px-3 font-semibold text-slate-800">{item.name}</td>
-                      <td className="py-2.5 px-3 text-slate-500">{item.description || '—'}</td>
-                      <td className="py-2.5 px-3">
-                        <button type="button" onClick={() => toggleActive(item)} className="inline-flex items-center gap-1 text-[11px]">
-                          {item.active ? (
-                            <><ToggleRight className="w-4 h-4 text-emerald-600" /> Ativo</>
-                          ) : (
-                            <><ToggleLeft className="w-4 h-4 text-slate-400" /> Inativo</>
-                          )}
-                        </button>
-                      </td>
-                      <td className="py-2.5 px-3 text-right">
-                        <button type="button" onClick={() => openEdit(item)} className="p-1.5 text-slate-500 hover:text-[#1890ff]" title="Editar">
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (confirm(`Excluir "${item.name}"?`)) {
-                              onDelete(item.id);
-                              addToast({ type: 'warning', title: 'Excluído', message: item.name });
-                            }
-                          }}
-                          className="p-1.5 text-slate-500 hover:text-rose-600"
-                          title="Excluir"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))
+                  filtered.map((item) => {
+                    const itemRole = roleFromMeta(item);
+                    const profile = getProfile(itemRole);
+                    return (
+                      <tr key={item.id}>
+                        <td className="py-2.5 px-3 font-semibold text-slate-800">{item.name}</td>
+                        {enableAccessRole ? (
+                          <>
+                            <td className="py-2.5 px-3 text-slate-600">{emailFromMeta(item) || '—'}</td>
+                            <td className="py-2.5 px-3">
+                              <span
+                                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold text-white"
+                                style={{ background: profile.color }}
+                              >
+                                {profile.title}
+                              </span>
+                            </td>
+                          </>
+                        ) : (
+                          <td className="py-2.5 px-3 text-slate-500">{item.description || '—'}</td>
+                        )}
+                        <td className="py-2.5 px-3">
+                          <button type="button" onClick={() => toggleActive(item)} className="inline-flex items-center gap-1 text-[11px]">
+                            {item.active ? (
+                              <><ToggleRight className="w-4 h-4 text-emerald-600" /> Ativo</>
+                            ) : (
+                              <><ToggleLeft className="w-4 h-4 text-slate-400" /> Inativo</>
+                            )}
+                          </button>
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <button type="button" onClick={() => openEdit(item)} className="p-1.5 text-slate-500 hover:text-[#1890ff]" title="Editar">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm(`Excluir "${item.name}"?`)) {
+                                onDelete(item.id);
+                                addToast({ type: 'warning', title: 'Excluído', message: item.name });
+                              }
+                            }}
+                            className="p-1.5 text-slate-500 hover:text-rose-600"
+                            title="Excluir"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
