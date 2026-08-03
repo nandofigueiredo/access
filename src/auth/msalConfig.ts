@@ -97,11 +97,14 @@ export const createMsalInstance = (settings: MsalConfigState = getStoredMsalSett
       authority: `https://login.microsoftonline.com/${settings.tenantId || 'common'}`,
       redirectUri,
       postLogoutRedirectUri: redirectUri,
+      navigateToLoginRequestUrl: true,
     },
     cache: {
       cacheLocation: 'localStorage',
+      storeAuthStateInCookie: false,
     },
     system: {
+      allowRedirectInIframe: false,
       loggerOptions: {
         loggerCallback: (level, message, containsPii) => {
           if (containsPii) return;
@@ -109,14 +112,10 @@ export const createMsalInstance = (settings: MsalConfigState = getStoredMsalSett
             case LogLevel.Error:
               console.error('[MSAL]', message);
               return;
-            case LogLevel.Info:
-              console.info('[MSAL]', message);
-              return;
-            case LogLevel.Verbose:
-              console.debug('[MSAL]', message);
-              return;
             case LogLevel.Warning:
               console.warn('[MSAL]', message);
+              return;
+            default:
               return;
           }
         },

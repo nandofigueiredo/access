@@ -1,46 +1,62 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { MsalProvider, useMsal } from '@azure/msal-react';
-import { PublicClientApplication } from '@azure/msal-browser';
+import { PublicClientApplication, InteractionStatus } from '@azure/msal-browser';
 import { UserProfile, MsalConfigState } from '../types';
-import { createMsalInstance, getStoredMsalSettings, isDemoLoginEnabled, isPlaceholderClientId, isSecureAuthContext, loginRequest, saveMsalSettings } from './msalConfig';
-import { InteractionStatus } from '@azure/msal-browser';
+import {
+  createMsalInstance,
+  getStoredMsalSettings,
+  isDemoLoginEnabled,
+  isPlaceholderClientId,
+  isSecureAuthContext,
+  loginRequest,
+  saveMsalSettings,
+} from './msalConfig';
 import { acquireApiAccessToken, setAccessTokenProvider, setMsalInstance, api } from '../api/client';
+import { AccessRole, DEMO_USERS } from './roles';
 
-/** Contas com papel admin fixo no Portal TI diRoma */
-export const ADMIN_EMAILS = new Set(['luis.figueiredo@diroma.com.br']);
+/**
+ * Admin (N3) — somente e-mails explicitamente listados / prefixo n3.
+ * Service Desk — ti. / sd.
+ * RH — rh.
+ * Gestor — gestor. / manager.
+ * Demais @diroma → viewer (sem elevação automática).
+ */
+export const ADMIN_EMAILS = new Set([
+  'luis.figueiredo@diroma.com.br',
+  'n3.admin@diroma.com.br',
+]);
 
-export function resolveUserRole(email: string): UserProfile['role'] {
+export function resolveUserRole(email: string): AccessRole {
   const normalized = email.trim().toLowerCase();
-  if (ADMIN_EMAILS.has(normalized)) return 'admin';
-  if (normalized.startsWith('rh.') || normalized.includes('.rh@')) return 'rh';
-  if (normalized.endsWith('@diroma.com.br')) return 'ti';
+  const local = normalized.split('@')[0] || '';
+
+  if (ADMIN_EMAILS.has(normalized) || local.startsWith('n3.') || local.startsWith('admin.n3')) {
+    return 'admin';
+  }
+  if (local.startsWith('rh.') || local.includes('.rh')) return 'rh';
+  if (local.startsWith('gestor.') || local.startsWith('manager.')) return 'gestor';
+  if (local.startsWith('ti.') || local.startsWith('sd.') || local.startsWith('servicedesk.')) {
+    return 'ti';
+  }
+  if (local.startsWith('viewer.') || local === 'viewer') return 'viewer';
   return 'viewer';
 }
 
 interface AuthContextType {
   user: UserProfile | null;
   loginWithMicrosoft: () => Promise<void>;
+  /** Login local por perfil (requer VITE_ENABLE_DEMO_LOGIN=true) */
+  loginAsProfile: (role: AccessRole) => Promise<void>;
   logout: () => void;
   msalSettings: MsalConfigState;
   updateMsalSettings: (settings: MsalConfigState) => void;
   getAccessToken: () => Promise<string | null>;
-  /** false quando aberto via http://IP — MSAL não funciona */
   secureContext: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-/** Fallback local quando Entra ID ainda não está configurado — sempre o admin diRoma */
-const ADMIN_BOOTSTRAP: UserProfile = {
-  name: 'Luis Figueiredo',
-  email: 'luis.figueiredo@diroma.com.br',
-  jobTitle: 'Administrador de TI',
-  department: 'TI',
-  tenantId: 'diroma-entra-id',
-  role: 'admin',
-  isAuthenticated: true,
-  isDemo: false,
-};
+const SESSION_KEY = 'onboarding_diroma_session';
 
 function buildProfileFromAccount(account: {
   name?: string;
@@ -48,13 +64,23 @@ function buildProfileFromAccount(account: {
   tenantId?: string;
 }): UserProfile {
   const email = account.username.toLowerCase();
+  const role = resolveUserRole(email);
   return {
     name: account.name || account.username,
     email,
-    jobTitle: ADMIN_EMAILS.has(email) ? 'Administrador de TI' : 'Colaborador Microsoft Entra ID',
-    department: 'TI',
+    jobTitle:
+      role === 'admin'
+        ? 'Equipe N3'
+        : role === 'ti'
+          ? 'Service Desk'
+          : role === 'rh'
+            ? 'Recursos Humanos'
+            : role === 'gestor'
+              ? 'Gestor'
+              : 'Visualizador',
+    department: role === 'rh' ? 'RH' : 'TI',
     tenantId: account.tenantId,
-    role: resolveUserRole(email),
+    role,
     isAuthenticated: true,
     isDemo: false,
   };
@@ -84,22 +110,26 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
     });
   }, [msalInstance, accounts, user]);
 
-  // Retorno do loginRedirect (produção / popup bloqueado)
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
+        // Só após pca.initialize() (feito no AuthProvider)
         const result = await instance.handleRedirectPromise();
-        if (cancelled || !result?.account) return;
-        const profile = buildProfileFromAccount(result.account);
-        const domain = profile.email.split('@')[1];
-        if (domain !== 'diroma.com.br') {
-          setUser(null);
-          await instance.logoutRedirect({ postLogoutRedirectUri: window.location.origin }).catch(() => undefined);
-          return;
+        if (cancelled) return;
+        if (result?.account) {
+          const profile = buildProfileFromAccount(result.account);
+          const domain = profile.email.split('@')[1];
+          if (domain !== 'diroma.com.br') {
+            setUser(null);
+            await instance
+              .logoutRedirect({ postLogoutRedirectUri: window.location.origin })
+              .catch(() => undefined);
+            return;
+          }
+          setUser(profile);
+          localStorage.removeItem(SESSION_KEY);
         }
-        setUser(profile);
-        localStorage.removeItem('onboarding_diroma_session');
       } catch (err) {
         console.warn('MSAL redirect:', err);
       }
@@ -115,7 +145,6 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
     }
   }, [accounts]);
 
-  // Alinha papel/nome com o backend (users.me) quando a API estiver no ar
   useEffect(() => {
     if (!user?.isAuthenticated || !user.email || user.isDemo) return;
     let cancelled = false;
@@ -125,7 +154,7 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
         if (cancelled || !me?.email) return;
         setUser((prev) => {
           if (!prev) return prev;
-          const nextRole = (me.role as UserProfile['role']) || prev.role;
+          const nextRole = (me.role as AccessRole) || prev.role;
           if (
             prev.name === (me.name || prev.name) &&
             prev.role === nextRole &&
@@ -145,13 +174,12 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
           };
         });
       } catch {
-        // API offline — mantém papel local
+        // API offline
       }
     })();
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync once per session email
   }, [user?.isAuthenticated, user?.email, user?.isDemo]);
 
   const getAccessToken = async () => {
@@ -159,20 +187,28 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
     return acquireApiAccessToken(accounts[0] || null);
   };
 
+  const loginAsProfile = async (role: AccessRole) => {
+    if (!isDemoLoginEnabled()) {
+      throw new Error(
+        'Login por perfil disponível apenas com VITE_ENABLE_DEMO_LOGIN=true. Em produção use Microsoft Entra ID.'
+      );
+    }
+    const profile = { ...DEMO_USERS[role] };
+    setUser(profile);
+    localStorage.setItem(SESSION_KEY, JSON.stringify(profile));
+  };
+
   const loginWithMicrosoft = async () => {
     const demoOk = isDemoLoginEnabled();
     const missingEntra = isPlaceholderClientId(msalSettings.clientId) || !msalSettings.configured;
 
-    // Bypass local SOMENTE se VITE_ENABLE_DEMO_LOGIN=true (dev)
     if (missingEntra && demoOk) {
-      setUser({ ...ADMIN_BOOTSTRAP, isDemo: true });
-      localStorage.setItem('onboarding_diroma_session', JSON.stringify({ ...ADMIN_BOOTSTRAP, isDemo: true }));
-      return;
+      throw new Error('Selecione um perfil acima e use “Entrar como…” (Entra ID ainda não configurado).');
     }
 
     if (missingEntra) {
       throw new Error(
-        'Entra ID não configurado neste build. No servidor, defina VITE_AZURE_CLIENT_ID / TENANT_ID no .env e reconstrua o front: sudo docker compose up -d --build web'
+        'Entra ID não configurado. Defina VITE_AZURE_CLIENT_ID / TENANT_ID no .env e reconstrua o front.'
       );
     }
 
@@ -181,7 +217,6 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
     }
 
     try {
-      // Redirect é mais confiável atrás do NPM (popup costuma ser bloqueado)
       await instance.loginRedirect(loginRequest);
     } catch (err: unknown) {
       console.warn('MSAL Login falhou:', err);
@@ -189,35 +224,33 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
     }
   };
 
-  // Restaura sessão bootstrap apenas em modo demo
   useEffect(() => {
     if (!isDemoLoginEnabled()) {
-      localStorage.removeItem('onboarding_diroma_session');
+      localStorage.removeItem(SESSION_KEY);
       return;
     }
     if (accounts.length > 0 || user) return;
-    const saved = localStorage.getItem('onboarding_diroma_session');
+    const saved = localStorage.getItem(SESSION_KEY);
     if (saved) {
       try {
         const parsed = JSON.parse(saved) as UserProfile;
-        if (parsed?.email && resolveUserRole(parsed.email) === 'admin') {
-          setUser({ ...parsed, role: 'admin', isAuthenticated: true, isDemo: true });
+        if (parsed?.role && parsed?.email) {
+          setUser({ ...parsed, isAuthenticated: true, isDemo: true });
         }
       } catch {
-        localStorage.removeItem('onboarding_diroma_session');
+        localStorage.removeItem(SESSION_KEY);
       }
     }
   }, [accounts.length, user]);
 
   const logout = () => {
-    localStorage.removeItem('onboarding_diroma_session');
+    localStorage.removeItem(SESSION_KEY);
     localStorage.removeItem('onboarding_demo_user');
     setUser(null);
     if (msalSettings.configured && accounts.length > 0) {
       instance
         .logoutRedirect({ postLogoutRedirectUri: window.location.origin })
         .catch((err) => console.warn('Logout error:', err));
-      return;
     }
   };
 
@@ -231,6 +264,7 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
       value={{
         user,
         loginWithMicrosoft,
+        loginAsProfile,
         logout,
         msalSettings,
         updateMsalSettings,
@@ -243,39 +277,47 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
   );
 };
 
-/** Sem Web Crypto (http://IP): não instancia MSAL — evita crash crypto_nonexistent */
 const AuthProviderInsecure: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [msalSettings, setMsalSettings] = useState<MsalConfigState>(getStoredMsalSettings);
   const [user, setUser] = useState<UserProfile | null>(null);
 
   useEffect(() => {
-    const saved = localStorage.getItem('onboarding_diroma_session');
+    if (!isDemoLoginEnabled()) return;
+    const saved = localStorage.getItem(SESSION_KEY);
     if (saved) {
       try {
         const parsed = JSON.parse(saved) as UserProfile;
-        if (parsed?.email && resolveUserRole(parsed.email) === 'admin') {
-          setUser({ ...parsed, role: 'admin', isAuthenticated: true });
+        if (parsed?.role && parsed?.email) {
+          setUser({ ...parsed, isAuthenticated: true, isDemo: true });
         }
       } catch {
-        localStorage.removeItem('onboarding_diroma_session');
+        localStorage.removeItem(SESSION_KEY);
       }
     }
   }, []);
 
-  const loginWithMicrosoft = async () => {
-    throw new Error(
-      'Microsoft Entra ID exige HTTPS. Use https://access.diroma.com.br (nginx). http://IP:porta não é contexto seguro para o login Microsoft.'
-    );
+  const loginAsProfile = async (role: AccessRole) => {
+    if (!isDemoLoginEnabled()) {
+      throw new Error('Login por perfil requer VITE_ENABLE_DEMO_LOGIN=true.');
+    }
+    const profile = { ...DEMO_USERS[role] };
+    setUser(profile);
+    localStorage.setItem(SESSION_KEY, JSON.stringify(profile));
   };
 
   return (
     <AuthContext.Provider
       value={{
         user,
-        loginWithMicrosoft,
+        loginWithMicrosoft: async () => {
+          throw new Error(
+            'Microsoft Entra ID exige HTTPS. Use https://access.diroma.com.br ou entre por perfil (demo).'
+          );
+        },
+        loginAsProfile,
         logout: () => {
           setUser(null);
-          localStorage.removeItem('onboarding_diroma_session');
+          localStorage.removeItem(SESSION_KEY);
         },
         msalSettings,
         updateMsalSettings: (s) => {
@@ -294,17 +336,58 @@ const AuthProviderInsecure: React.FC<{ children: ReactNode }> = ({ children }) =
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [msalSettings, setMsalSettings] = useState<MsalConfigState>(getStoredMsalSettings);
   const secure = isSecureAuthContext();
-  const [msalInstance] = useState(() => {
-    if (!isSecureAuthContext()) return null;
-    try {
-      return createMsalInstance(getStoredMsalSettings());
-    } catch {
-      return null;
+  const [msalInstance, setMsalInstanceState] = useState<PublicClientApplication | null>(null);
+  const [msalReady, setMsalReady] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!secure) {
+      setMsalReady(true);
+      return;
     }
-  });
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const pca = createMsalInstance(getStoredMsalSettings());
+        // MSAL Browser v3+ exige initialize() antes de qualquer API
+        await pca.initialize();
+        if (cancelled) return;
+        setMsalInstanceState(pca);
+        setMsalReady(true);
+      } catch (err) {
+        console.error('Falha ao inicializar MSAL:', err);
+        if (!cancelled) {
+          setInitError(err instanceof Error ? err.message : 'Falha ao inicializar Microsoft Entra ID');
+          setMsalReady(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [secure]);
+
+  if (!msalReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#f0f2f5] text-slate-600 text-sm">
+        Inicializando autenticação Microsoft…
+      </div>
+    );
+  }
 
   if (!secure || !msalInstance) {
-    return <AuthProviderInsecure>{children}</AuthProviderInsecure>;
+    return (
+      <>
+        {initError && (
+          <div className="fixed top-0 inset-x-0 z-50 bg-amber-50 text-amber-900 text-center text-xs py-2 px-3 border-b border-amber-200">
+            {initError}
+          </div>
+        )}
+        <AuthProviderInsecure>{children}</AuthProviderInsecure>
+      </>
+    );
   }
 
   return (
