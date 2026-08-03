@@ -93,18 +93,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenSettings }) => {
       {/* Left — Auth panel */}
       <section className="w-full lg:w-[38%] xl:w-[34%] flex flex-col justify-between px-8 sm:px-12 py-8 relative z-10 bg-white">
         <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={toggleDebug}
-            className={`px-2 py-1 rounded-md text-[11px] font-medium border transition ${
-              debugOn
-                ? 'bg-amber-50 text-amber-900 border-amber-300'
-                : 'text-slate-400 border-slate-200 hover:bg-slate-50'
-            }`}
-            title="Ativar painel de debug do login Microsoft"
-          >
-            {debugOn ? 'Debug ON' : 'Debug'}
-          </button>
+          {debugOn && (
+            <button
+              type="button"
+              onClick={toggleDebug}
+              className="px-2 py-1 rounded-md text-[11px] font-medium border transition bg-amber-50 text-amber-900 border-amber-300"
+              title="Desativar painel de debug do login Microsoft"
+            >
+              Debug ON
+            </button>
+          )}
           <button
             type="button"
             onClick={onOpenSettings}

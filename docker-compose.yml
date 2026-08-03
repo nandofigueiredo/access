@@ -97,7 +97,7 @@ services:
         VITE_AZURE_REDIRECT_URI: ${VITE_AZURE_REDIRECT_URI:-}
         VITE_AZURE_API_SCOPE: ${VITE_AZURE_API_SCOPE:-}
         VITE_ENABLE_DEMO_LOGIN: ${VITE_ENABLE_DEMO_LOGIN:-false}
-        VITE_AUTH_DEBUG: ${VITE_AUTH_DEBUG:-true}
+        VITE_AUTH_DEBUG: ${VITE_AUTH_DEBUG:-false}
     image: access-web:latest
     container_name: access-web
     restart: unless-stopped

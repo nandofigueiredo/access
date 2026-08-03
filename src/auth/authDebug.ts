@@ -52,6 +52,7 @@ export function setAuthDebugEnabled(on: boolean): void {
 }
 
 export function authDebugLog(message: string, data?: unknown): void {
+  if (!isAuthDebugEnabled()) return;
   const line =
     data === undefined
       ? `[${now()}] ${message}`
