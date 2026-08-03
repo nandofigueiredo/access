@@ -118,8 +118,16 @@ export const createMsalInstance = (settings: MsalConfigState = getStoredMsalSett
       authority: `https://login.microsoftonline.com/${settings.tenantId || 'common'}`,
       redirectUri,
       postLogoutRedirectUri: redirectUri,
-      // Evita segundo redirect após o login (loop → tela de login)
-      navigateToLoginRequestUrl: false,
+      // Bloqueia window.location para a própria origem (evita reload em loop pós-auth)
+      onRedirectNavigate: (url) => {
+        try {
+          const target = new URL(url, window.location.origin);
+          if (target.origin === window.location.origin) return false;
+        } catch {
+          // allow
+        }
+        return true;
+      },
     },
     cache: {
       cacheLocation: 'localStorage',

@@ -7,88 +7,18 @@ import {
 } from '@azure/msal-browser';
 import { UserProfile, MsalConfigState } from '../types';
 import {
-  createMsalInstance,
   getStoredMsalSettings,
   isDemoLoginEnabled,
   isPlaceholderClientId,
   isSecureAuthContext,
-  clearMsalInteractionLocks,
-  loginRequest,
   saveMsalSettings,
 } from './msalConfig';
+import { bootMsal, getBootedMsal, loginRequest, MSAL_BOOT_ERROR_KEY } from './msalBoot';
 import { acquireApiAccessToken, setAccessTokenProvider, setMsalInstance, api } from '../api/client';
 import { AccessRole, DEMO_USERS } from './roles';
 
 const CATALOG_STORAGE_KEY = 'portal_ti_system_catalog_v1';
 const SESSION_KEY = 'onboarding_diroma_session';
-const MSAL_BOOT_ERROR_KEY = 'msal_boot_error';
-
-/** Singleton — evita Strict Mode consumir o ?code= OAuth duas vezes */
-let msalBootPromise: Promise<PublicClientApplication> | null = null;
-
-/** Lê #error=... / ?error=... que o Entra devolve no redirect (ex.: AADSTS500011). */
-function captureEntraRedirectError(): string | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const hash = window.location.hash?.replace(/^#/, '') || '';
-    const search = window.location.search?.replace(/^\?/, '') || '';
-    const params = new URLSearchParams(hash || search);
-    const code = params.get('error');
-    const desc = params.get('error_description');
-    if (!code && !desc) return null;
-
-    const decoded = desc ? decodeURIComponent(desc.replace(/\+/g, ' ')) : code || 'erro Entra ID';
-    // Limpa a URL para não reprocessar o erro a cada reload
-    const clean = `${window.location.origin}${window.location.pathname}`;
-    window.history.replaceState({}, document.title, clean);
-    return decoded;
-  } catch {
-    return null;
-  }
-}
-
-async function bootMsalInstance(): Promise<PublicClientApplication> {
-  if (msalBootPromise) return msalBootPromise;
-
-  msalBootPromise = (async () => {
-    const entraErr = captureEntraRedirectError();
-    if (entraErr) {
-      try {
-        sessionStorage.setItem(MSAL_BOOT_ERROR_KEY, entraErr);
-      } catch {
-        // ignore
-      }
-    }
-
-    clearMsalInteractionLocks();
-    const pca = createMsalInstance(getStoredMsalSettings());
-    await pca.initialize();
-
-    try {
-      const result = await pca.handleRedirectPromise();
-      if (result?.account) {
-        pca.setActiveAccount(result.account);
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn('MSAL redirect no boot:', err);
-      try {
-        sessionStorage.setItem(MSAL_BOOT_ERROR_KEY, message);
-      } catch {
-        // ignore
-      }
-    }
-
-    const accounts = pca.getAllAccounts();
-    if (!pca.getActiveAccount() && accounts.length > 0) {
-      pca.setActiveAccount(accounts[0]);
-    }
-
-    return pca;
-  })();
-
-  return msalBootPromise;
-}
 
 /** Papel cadastrado em Administração → Usuários & Perfis (por e-mail). */
 export function lookupCatalogRole(email: string): AccessRole | null {
@@ -165,10 +95,15 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 function buildProfileFromAccount(account: AccountInfo): UserProfile {
-  const email = (account.username || '').toLowerCase();
+  const claims = (account.idTokenClaims || {}) as Record<string, unknown>;
+  const email = (
+    account.username ||
+    (typeof claims.preferred_username === 'string' ? claims.preferred_username : '') ||
+    (typeof claims.email === 'string' ? claims.email : '')
+  ).toLowerCase();
   const role = resolveUserRole(email);
   return {
-    name: account.name || account.username,
+    name: account.name || email || account.username,
     email,
     jobTitle:
       role === 'admin'
@@ -188,7 +123,10 @@ function buildProfileFromAccount(account: AccountInfo): UserProfile {
   };
 }
 
-function pickAccount(accounts: AccountInfo[], instance: PublicClientApplication): AccountInfo | null {
+function pickAccount(
+  accounts: AccountInfo[],
+  instance: { getActiveAccount(): AccountInfo | null }
+): AccountInfo | null {
   return instance.getActiveAccount() || accounts[0] || null;
 }
 
@@ -219,14 +157,18 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
     const account = pickAccount(accounts, instance);
     if (!account) return;
 
-    const email = (account.username || '').toLowerCase();
-    const domain = email.split('@')[1];
+    const claims = (account.idTokenClaims || {}) as Record<string, unknown>;
+    const email = (
+      account.username ||
+      (typeof claims.preferred_username === 'string' ? claims.preferred_username : '') ||
+      (typeof claims.email === 'string' ? claims.email : '')
+    ).toLowerCase();
+    const domain = email.includes('@') ? email.split('@')[1] : '';
+
+    // Não usar logoutRedirect aqui — causa loop de reload com o Entra
     if (domain && domain !== 'diroma.com.br') {
       setAuthError('Acesso restrito a contas @diroma.com.br');
       setUser(null);
-      instance
-        .logoutRedirect({ postLogoutRedirectUri: window.location.origin })
-        .catch(() => undefined);
       return;
     }
 
@@ -319,6 +261,8 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
     try {
       setAuthError(null);
       sessionStorage.removeItem(MSAL_BOOT_ERROR_KEY);
+      // URL limpa antes do redirect (evita reprocessar code antigo)
+      window.history.replaceState({}, document.title, window.location.origin + window.location.pathname);
       await msalInstance.initialize();
       await msalInstance.loginRedirect(loginRequest);
     } catch (err: unknown) {
@@ -443,10 +387,18 @@ const AuthProviderInsecure: React.FC<{ children: ReactNode }> = ({ children }) =
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [msalSettings, setMsalSettings] = useState<MsalConfigState>(getStoredMsalSettings);
   const secure = isSecureAuthContext();
-  const [msalInstance, setMsalInstanceState] = useState<PublicClientApplication | null>(null);
-  const [msalReady, setMsalReady] = useState(false);
+  const [msalInstance, setMsalInstanceState] = useState<PublicClientApplication | null>(() =>
+    getBootedMsal()
+  );
+  const [msalReady, setMsalReady] = useState(() => !secure || getBootedMsal() !== null);
   const [initError, setInitError] = useState<string | null>(null);
-  const [bootError, setBootError] = useState<string | null>(null);
+  const [bootError, setBootError] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem(MSAL_BOOT_ERROR_KEY);
+    } catch {
+      return null;
+    }
+  });
 
   useEffect(() => {
     if (!secure) {
@@ -454,33 +406,41 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return;
     }
 
-    let cancelled = false;
-    (async () => {
+    if (getBootedMsal()) {
+      setMsalInstanceState(getBootedMsal());
+      setMsalReady(true);
       try {
-        const pca = await bootMsalInstance();
         const storedErr = sessionStorage.getItem(MSAL_BOOT_ERROR_KEY);
         if (storedErr) {
           sessionStorage.removeItem(MSAL_BOOT_ERROR_KEY);
-          if (!cancelled) setBootError(storedErr);
+          setBootError(storedErr);
         }
-        if (!cancelled) {
-          setMsalInstanceState(pca);
-          setMsalReady(true);
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    (async () => {
+      try {
+        const pca = await bootMsal();
+        try {
+          const storedErr = sessionStorage.getItem(MSAL_BOOT_ERROR_KEY);
+          if (storedErr) {
+            sessionStorage.removeItem(MSAL_BOOT_ERROR_KEY);
+            setBootError(storedErr);
+          }
+        } catch {
+          // ignore
         }
+        setMsalInstanceState(pca);
+        setMsalReady(true);
       } catch (err) {
         console.error('Falha ao inicializar MSAL:', err);
-        // permite retry em novo carregamento
-        msalBootPromise = null;
-        if (!cancelled) {
-          setInitError(err instanceof Error ? err.message : 'Falha ao inicializar Microsoft Entra ID');
-          setMsalReady(true);
-        }
+        setInitError(err instanceof Error ? err.message : 'Falha ao inicializar Microsoft Entra ID');
+        setMsalReady(true);
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
   }, [secure]);
 
   if (!msalReady) {
