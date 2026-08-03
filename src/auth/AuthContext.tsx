@@ -8,6 +8,7 @@ import {
   isDemoLoginEnabled,
   isPlaceholderClientId,
   isSecureAuthContext,
+  clearMsalInteractionLocks,
   loginRequest,
   saveMsalSettings,
 } from './msalConfig';
@@ -103,48 +104,20 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
   const [user, setUser] = useState<UserProfile | null>(null);
 
   useEffect(() => {
+    // Contas já resolvidas no AuthProvider via handleRedirectPromise
+    if (accounts.length > 0) {
+      setUser(buildProfileFromAccount(accounts[0]));
+      localStorage.removeItem(SESSION_KEY);
+    }
+  }, [accounts]);
+
+  useEffect(() => {
     setMsalInstance(msalInstance);
     setAccessTokenProvider(async () => {
       if (!user || user.isDemo) return null;
       return acquireApiAccessToken(accounts[0] || null);
     });
   }, [msalInstance, accounts, user]);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        // initialize() é idempotente — garante estado pronto mesmo se o Provider recriar o wrapper
-        await msalInstance.initialize();
-        const result = await msalInstance.handleRedirectPromise();
-        if (cancelled) return;
-        if (result?.account) {
-          const profile = buildProfileFromAccount(result.account);
-          const domain = profile.email.split('@')[1];
-          if (domain !== 'diroma.com.br') {
-            setUser(null);
-            await msalInstance
-              .logoutRedirect({ postLogoutRedirectUri: window.location.origin })
-              .catch(() => undefined);
-            return;
-          }
-          setUser(profile);
-          localStorage.removeItem(SESSION_KEY);
-        }
-      } catch (err) {
-        console.warn('MSAL redirect:', err);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [msalInstance]);
-
-  useEffect(() => {
-    if (accounts.length > 0) {
-      setUser(buildProfileFromAccount(accounts[0]));
-    }
-  }, [accounts]);
 
   useEffect(() => {
     if (!user?.isAuthenticated || !user.email || user.isDemo) return;
@@ -351,9 +324,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     let cancelled = false;
     (async () => {
       try {
+        clearMsalInteractionLocks();
         const pca = createMsalInstance(getStoredMsalSettings());
         // MSAL Browser v3+ exige initialize() antes de qualquer API
         await pca.initialize();
+        // Consome o código OAuth na própria aba (sem popup)
+        await pca.handleRedirectPromise().catch((err) => {
+          console.warn('MSAL redirect no boot:', err);
+        });
         if (cancelled) return;
         setMsalInstanceState(pca);
         setMsalReady(true);

@@ -29,9 +29,16 @@ export const msalConfig = {
   },
 };
 
-/** Scopes para login interativo (perfil + Graph básico). */
+/** Scopes para login interativo (perfil + escopo da API própria). */
 export const loginRequest = {
-  scopes: ['openid', 'profile', 'email', 'User.Read'],
+  scopes: [
+    'openid',
+    'profile',
+    'email',
+    'User.Read',
+    // Inclui o escopo da API para o token silencioso funcionar sem popup
+    ...(apiScope && apiScope !== 'User.Read' ? [apiScope] : []),
+  ],
 };
 
 /**

@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse
 
@@ -50,7 +52,26 @@ async def health() -> dict[str, str]:
         "status": "ok" if redis_ok else "degraded",
         "env": settings_cfg.app_env,
         "redis": "up" if redis_ok else "down",
+        "auth_disabled": str(settings_cfg.auth_disabled).lower(),
     }
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    if isinstance(exc, HTTPException):
+        return await http_exception_handler(request, exc)
+
+    import traceback
+
+    traceback.print_exc()
+    detail = str(exc) if settings_cfg.debug else "Erro interno do servidor."
+    msg = str(exc).lower()
+    if "workflow" in msg or "app_settings" in msg or "undefinedcolumn" in msg or "does not exist" in msg:
+        detail = (
+            "Schema do banco desatualizado. Aplique backend/sql/002_integration.sql "
+            f"(coluna/tabela ausente). Detalhe: {exc}"
+        )
+    return JSONResponse(status_code=500, content={"detail": detail})
 
 
 @app.exception_handler(ValueError)

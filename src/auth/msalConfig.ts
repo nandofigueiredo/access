@@ -71,6 +71,17 @@ export function isSecureAuthContext(): boolean {
   return host === 'localhost' || host === '127.0.0.1';
 }
 
+/** Limpa flag de interação MSAL presa (causa interaction_in_progress + popup fantasma). */
+export function clearMsalInteractionLocks(): void {
+  if (typeof sessionStorage === 'undefined') return;
+  const keys: string[] = [];
+  for (let i = 0; i < sessionStorage.length; i += 1) {
+    const k = sessionStorage.key(i);
+    if (k && (k.includes('interaction') || k.includes('request.params'))) keys.push(k);
+  }
+  keys.forEach((k) => sessionStorage.removeItem(k));
+}
+
 export const createMsalInstance = (settings: MsalConfigState = getStoredMsalSettings()) => {
   if (!isSecureAuthContext()) {
     throw new Error(

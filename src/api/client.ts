@@ -27,34 +27,37 @@ export function setAccessTokenProvider(provider: TokenProvider) {
   tokenProvider = provider;
 }
 
-/** Obtém access_token silencioso para a API (ou null em modo demo). */
+/** Obtém access_token silencioso para a API. Nunca abre popup (evita janela fantasma). */
 export async function acquireApiAccessToken(account?: AccountInfo | null): Promise<string | null> {
   if (!msalInstanceRef) return null;
+  try {
+    await msalInstanceRef.initialize();
+  } catch {
+    // ignore
+  }
+
   const accounts = msalInstanceRef.getAllAccounts();
   const active = account || accounts[0];
   if (!active) return null;
 
-  const request: SilentRequest = {
-    ...apiTokenRequest,
-    account: active,
-  };
+  const attempts: SilentRequest[] = [
+    { ...apiTokenRequest, account: active },
+    { ...loginRequest, account: active },
+  ];
 
-  try {
-    const result = await msalInstanceRef.acquireTokenSilent(request);
-    return result.accessToken;
-  } catch {
+  for (const request of attempts) {
     try {
-      const result = await msalInstanceRef.acquireTokenPopup({
-        ...apiTokenRequest,
-        ...loginRequest,
-        account: active,
-      });
-      return result.accessToken;
-    } catch (err) {
-      console.warn('Falha ao obter access_token para API:', err);
-      return null;
+      const result = await msalInstanceRef.acquireTokenSilent(request);
+      if (result?.accessToken) return result.accessToken;
+    } catch {
+      // tenta próximo conjunto de scopes
     }
   }
+
+  console.warn(
+    'Falha ao obter access_token silencioso. Faça logout/login Microsoft de novo (sem popup automático).'
+  );
+  return null;
 }
 
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
