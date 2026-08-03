@@ -103,29 +103,15 @@ function extractAccountEmail(account: AccountInfo): string {
   ).toLowerCase();
 }
 
-/** Atualiza catálogo local a partir da API (fonte de verdade dos operadores). */
-async function syncCatalogUsersFromApi(): Promise<CatalogUserRow[]> {
+/** Lê usuários do catálogo na API sem corromper o localStorage (evita sumiço no sync). */
+async function fetchCatalogUsersFromApi(): Promise<CatalogUserRow[]> {
   if (!USE_API) return readCatalogUsers();
   try {
     const remote = await api.getSetting<{ users?: CatalogUserRow[] }>('catalog');
     const users = remote?.value?.users;
-    if (!Array.isArray(users)) return readCatalogUsers();
-    try {
-      const raw = localStorage.getItem(CATALOG_STORAGE_KEY);
-      const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
-      const next = {
-        ...parsed,
-        users,
-        updatedAt: new Date().toISOString(),
-      };
-      localStorage.setItem(CATALOG_STORAGE_KEY, JSON.stringify(next));
-      window.dispatchEvent(new Event(CATALOG_UPDATED_EVENT));
-    } catch {
-      // ignore storage
-    }
-    return users;
+    return Array.isArray(users) ? users : readCatalogUsers();
   } catch (err) {
-    console.warn('Falha ao sincronizar Usuários & Perfis da API:', err);
+    console.warn('Falha ao ler Usuários & Perfis da API:', err);
     return readCatalogUsers();
   }
 }
@@ -161,8 +147,8 @@ async function verifyPortalAccess(email: string): Promise<{ allowed: boolean; re
     }
   }
 
-  // 2) Fallback: lista de usuários do settings/catalog
-  const users = await syncCatalogUsersFromApi();
+  // 2) Fallback: lista de usuários do settings/catalog (somente leitura)
+  const users = await fetchCatalogUsersFromApi();
   const row = matchCatalogUser(email, users);
   if (!row) {
     return {
@@ -170,7 +156,11 @@ async function verifyPortalAccess(email: string): Promise<{ allowed: boolean; re
       reason: `"${email}" não está cadastrado em Administração → Usuários & Perfis. Peça a um Admin N3 para liberar o acesso.`,
     };
   }
-  const role = lookupCatalogRole(email) || 'viewer';
+  const rawRole = row.meta?.role;
+  const role =
+    rawRole === 'admin' || rawRole === 'ti' || rawRole === 'rh' || rawRole === 'gestor' || rawRole === 'viewer'
+      ? rawRole
+      : 'viewer';
   return { allowed: true, role };
 }
 
@@ -302,8 +292,6 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
       localStorage.removeItem(SESSION_KEY);
       setAuthError(null);
       setAccessChecking(false);
-      // Mantém catálogo local alinhado
-      void syncCatalogUsersFromApi();
     })();
 
     return () => {

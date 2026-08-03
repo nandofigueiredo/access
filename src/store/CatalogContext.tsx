@@ -48,6 +48,70 @@ function isValidCatalog(value: unknown): value is SystemCatalog {
   return Array.isArray(c.departments) && Array.isArray(c.formFields);
 }
 
+function userIdentityKey(u: CatalogItem): string {
+  const mail = typeof u.meta?.email === 'string' ? u.meta.email.trim().toLowerCase() : '';
+  if (mail.includes('@')) return `mail:${mail}`;
+  const name = (u.name || '').trim().toLowerCase();
+  if (name.includes('@')) return `mail:${name}`;
+  return `id:${u.id}`;
+}
+
+function richerUser(a: CatalogItem, b: CatalogItem): CatalogItem {
+  const aMail = typeof a.meta?.email === 'string' ? a.meta.email : '';
+  const bMail = typeof b.meta?.email === 'string' ? b.meta.email : '';
+  const aRole = typeof a.meta?.role === 'string' ? a.meta.role : '';
+  const bRole = typeof b.meta?.role === 'string' ? b.meta.role : '';
+  const pick = bMail.includes('@') && !aMail.includes('@') ? b : aMail.includes('@') ? a : b;
+  const other = pick === a ? b : a;
+  const email =
+    (typeof pick.meta?.email === 'string' && pick.meta.email.includes('@')
+      ? pick.meta.email
+      : typeof other.meta?.email === 'string' && other.meta.email.includes('@')
+        ? other.meta.email
+        : pick.name.includes('@')
+          ? pick.name.trim().toLowerCase()
+          : other.name.includes('@')
+            ? other.name.trim().toLowerCase()
+            : '') || undefined;
+  const role =
+    (typeof pick.meta?.role === 'string' && pick.meta.role) ||
+    (typeof other.meta?.role === 'string' && other.meta.role) ||
+    undefined;
+  const name =
+    pick.name.includes('@') && other.name && !other.name.includes('@')
+      ? other.name
+      : other.name.includes('@') && pick.name && !pick.name.includes('@')
+        ? pick.name
+        : pick.name || other.name;
+  return {
+    ...other,
+    ...pick,
+    name,
+    active: pick.active !== false && other.active !== false,
+    meta: {
+      ...(other.meta || {}),
+      ...(pick.meta || {}),
+      ...(email ? { email: email.trim().toLowerCase() } : {}),
+      ...(role ? { role } : {}),
+    },
+    description: pick.description || other.description || (role === 'admin' ? 'Admin N3' : undefined),
+  };
+}
+
+/** União de usuários por e-mail/id — nunca descarta cadastro de um dos lados. */
+function mergeCatalogUsers(local: CatalogItem[], remote: CatalogItem[]): CatalogItem[] {
+  const map = new Map<string, CatalogItem>();
+  for (const u of remote) {
+    map.set(userIdentityKey(u), u);
+  }
+  for (const u of local) {
+    const key = userIdentityKey(u);
+    const existing = map.get(key);
+    map.set(key, existing ? richerUser(existing, u) : u);
+  }
+  return Array.from(map.values());
+}
+
 /** Garante arrays em todas as chaves de lista (evita "X is not iterable"). */
 function normalizeCatalog(value: SystemCatalog): SystemCatalog {
   const base = createDefaultCatalog();
@@ -72,6 +136,7 @@ function normalizeCatalog(value: SystemCatalog): SystemCatalog {
       return {
         ...u,
         name: displayName.replace(/\b\w/g, (c) => c.toUpperCase()),
+        description: u.description || 'Visualizador',
         meta: {
           ...(u.meta || {}),
           email,
@@ -102,7 +167,7 @@ function normalizeCatalog(value: SystemCatalog): SystemCatalog {
   } else {
     out.users = out.users.map((u) => {
       const mail = String(u.meta?.email || '').toLowerCase();
-      if (mail === luisEmail) {
+      if (mail === luisEmail || u.name.toLowerCase().includes('luis.figueiredo')) {
         return {
           ...u,
           name: u.name.includes('@') ? 'Luis Figueiredo' : u.name,
@@ -139,22 +204,56 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const saveTimer = useRef<number | null>(null);
 
   const pushRemote = useCallback(async (next: SystemCatalog) => {
-    if (!USE_API || !user?.isAuthenticated) return;
+    if (!USE_API || !user?.isAuthenticated) return false;
     try {
-      await api.putSetting('catalog', next as unknown as Record<string, unknown>);
+      const deleteIds = (next as SystemCatalog & { userDeleteIds?: string[] }).userDeleteIds;
+      // Antes de gravar, une com o que já está no banco para não apagar usuários
+      let toSave: SystemCatalog & { userDeleteIds?: string[] } = next;
+      try {
+        const remote = await api.getSetting('catalog');
+        if (isValidCatalog(remote.value) && Array.isArray((remote.value as SystemCatalog).users)) {
+          const remoteCat = remote.value as SystemCatalog;
+          const mergedUsers = mergeCatalogUsers(next.users || [], remoteCat.users || []);
+          toSave = normalizeCatalog({
+            ...remoteCat,
+            ...next,
+            users: mergedUsers,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } catch {
+        // segue com next
+      }
+      if (deleteIds?.length) {
+        toSave = { ...toSave, userDeleteIds: deleteIds };
+      }
+      const saved = await api.putSetting(
+        'catalog',
+        toSave as unknown as Record<string, unknown>
+      );
+      const stored = normalizeCatalog((saved.value || toSave) as SystemCatalog);
+      setCatalog(stored);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+      notifyCatalogUpdated();
+      return true;
     } catch (err) {
       console.warn('Falha ao gravar catálogo no banco:', err);
+      return false;
     }
   }, [user?.isAuthenticated]);
 
   const persist = useCallback(
-    (next: SystemCatalog, opts?: { remote?: boolean }) => {
-      const withTs = { ...next, updatedAt: new Date().toISOString() };
+    (next: SystemCatalog, opts?: { remote?: boolean; immediate?: boolean }) => {
+      const withTs = normalizeCatalog({ ...next, updatedAt: new Date().toISOString() });
       setCatalog(withTs);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(withTs));
       notifyCatalogUpdated();
       if (opts?.remote === false) return;
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
+      if (opts?.immediate) {
+        void pushRemote(withTs);
+        return;
+      }
       saveTimer.current = window.setTimeout(() => {
         void pushRemote(withTs);
       }, 400);
@@ -170,16 +269,40 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (isValidCatalog(remote.value) && Object.keys(remote.value).length > 0) {
         const normalized = normalizeCatalog(remote.value as SystemCatalog);
         setCatalog((local) => {
-          const localTs = catalogTimestamp(local);
-          const remoteTs = catalogTimestamp(normalized);
-          // Não sobrescrever cadastro local mais novo (evita sumir usuário acabado de salvar)
-          if (localTs > remoteTs) {
-            void pushRemote(local);
-            return local;
+          const mergedUsers = mergeCatalogUsers(local.users || [], normalized.users || []);
+          const merged = normalizeCatalog({
+            ...normalized,
+            users: mergedUsers,
+            updatedAt:
+              catalogTimestamp(local) > catalogTimestamp(normalized)
+                ? local.updatedAt || normalized.updatedAt
+                : normalized.updatedAt || local.updatedAt,
+          });
+
+          const remoteCount = (normalized.users || []).length;
+          const mergedCount = mergedUsers.length;
+          const needsMetaRepair = mergedUsers.some((u) => {
+            const mail = String(u.meta?.email || '');
+            const role = String(u.meta?.role || '');
+            return Boolean(mail.includes('@') && role);
+          }) && (normalized.users || []).some((u) => {
+            const mail = String(u.meta?.email || '');
+            const nameIsMail = (u.name || '').includes('@');
+            return nameIsMail && !mail.includes('@');
+          });
+
+          // Se o local tinha usuários extras OU remoto precisa reparo de meta, regrava
+          if (mergedCount > remoteCount || needsMetaRepair) {
+            const toPush = { ...merged, updatedAt: new Date().toISOString() };
+            void pushRemote(toPush);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(toPush));
+            notifyCatalogUpdated();
+            return toPush;
           }
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
           notifyCatalogUpdated();
-          return normalized;
+          return merged;
         });
       } else {
         // Seed banco com catálogo local na primeira vez
@@ -222,14 +345,20 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const idx = list.findIndex((i) => i.id === item.id);
       if (idx >= 0) list[idx] = item;
       else list.push(item);
-      persist({ ...catalog, [key]: list });
+      // Usuários: grava no banco na hora (sem debounce) para não sumir no poll
+      persist({ ...catalog, [key]: list }, { immediate: key === 'users' });
     },
     [catalog, persist]
   );
 
   const removeItem = useCallback(
     (key: Exclude<CatalogKey, 'formFields'>, id: string) => {
-      persist({ ...catalog, [key]: catalog[key].filter((i) => i.id !== id) });
+      const next = {
+        ...catalog,
+        [key]: catalog[key].filter((i) => i.id !== id),
+        ...(key === 'users' ? { userDeleteIds: [id] } : {}),
+      } as SystemCatalog & { userDeleteIds?: string[] };
+      persist(next, { immediate: key === 'users' });
     },
     [catalog, persist]
   );
