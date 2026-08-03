@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse
 
 from app.config import get_settings
+from app.redis_client import close_redis, redis_ping
 from app.routers import audit, offboarding, onboarding, requests, settings, users
 
 settings_cfg = get_settings()
@@ -13,6 +14,7 @@ settings_cfg = get_settings()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     yield
+    await close_redis()
 
 
 app = FastAPI(
@@ -43,7 +45,12 @@ app.include_router(settings.router, prefix=api)
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "env": settings_cfg.app_env}
+    redis_ok = await redis_ping()
+    return {
+        "status": "ok" if redis_ok else "degraded",
+        "env": settings_cfg.app_env,
+        "redis": "up" if redis_ok else "down",
+    }
 
 
 @app.exception_handler(ValueError)

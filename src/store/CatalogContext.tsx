@@ -48,7 +48,6 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [catalog, setCatalog] = useState<SystemCatalog>(() => loadLocalCatalog());
   const [syncing, setSyncing] = useState(false);
   const saveTimer = useRef<number | null>(null);
-  const skipNextPush = useRef(false);
 
   const pushRemote = useCallback(async (next: SystemCatalog) => {
     if (!USE_API || !user?.isAuthenticated) return;
@@ -79,7 +78,6 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     try {
       const remote = await api.getSetting('catalog');
       if (isValidCatalog(remote.value) && Object.keys(remote.value).length > 0) {
-        skipNextPush.current = true;
         setCatalog(remote.value);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(remote.value));
       } else {

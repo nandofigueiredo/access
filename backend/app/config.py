@@ -24,6 +24,12 @@ class Settings(BaseSettings):
         description="SQLAlchemy async URL",
     )
 
+    # Redis (cache, filas futuras de e-mail / jobs)
+    redis_url: str = Field(
+        default="redis://localhost:6379/0",
+        description="URL Redis (ex.: redis://access-redis:6379/0)",
+    )
+
     # Microsoft Entra ID
     azure_tenant_id: str = "common"
     azure_client_id: str = ""

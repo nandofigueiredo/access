@@ -207,20 +207,20 @@ const AppContent: React.FC = () => {
       const result = await api.updateStatus(updatedTicket.id, updatedTicket.status, {
         itNotes: updatedTicket.itNotes,
         itChecklist: updatedTicket.itChecklist as Record<string, boolean> | undefined,
-        workflow: updatedTicket.workflow as Record<string, unknown> | undefined,
+        workflow: updatedTicket.workflow as unknown as Record<string, unknown> | undefined,
         requesterEmail: updatedTicket.requesterEmail,
         assignedQueue: updatedTicket.assignedQueue,
       });
-      const merged: Ticket = {
+      const merged = {
         ...updatedTicket,
         status: result.status,
         updatedAt: result.updatedAt,
         itNotes: result.itNotes ?? updatedTicket.itNotes,
-        itChecklist: (result.itChecklist as Ticket['itChecklist']) ?? updatedTicket.itChecklist,
-        workflow: (result.workflow as Ticket['workflow']) ?? updatedTicket.workflow,
+        itChecklist: (result.itChecklist as typeof updatedTicket.itChecklist) ?? updatedTicket.itChecklist,
+        workflow: (result.workflow as unknown as Ticket['workflow']) ?? updatedTicket.workflow,
         requesterEmail: result.requesterEmail ?? updatedTicket.requesterEmail,
         assignedQueue: result.assignedQueue ?? updatedTicket.assignedQueue,
-      };
+      } as Ticket;
       setTickets((prev) => prev.map((t) => (t.id === merged.id ? merged : t)));
       setSelectedTicket(merged);
     } catch (err) {

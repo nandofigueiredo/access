@@ -1,40 +1,117 @@
+# =============================================================================
+# Access diRoma — clone + .env + containers
+# Nginx do HOST na frente (ver deploy/nginx-host.conf.example)
+#
+#   git clone https://github.com/nandofigueiredo/access.git && cd access
+#   cp .env.example .env   # edite
+#   docker compose up -d --build
+#
+# Postgres local opcional:  docker compose --profile with-db up -d --build
+# =============================================================================
+
+name: access-diroma
+
 services:
-  db:
+  # Opcional — só se NÃO tiver Postgres externo. Ative com --profile with-db
+  postgres:
+    profiles: ["with-db"]
     image: postgres:16-alpine
-    container_name: portal_ti_postgres
+    container_name: access-postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: portal_ti
-      POSTGRES_PASSWORD: portal_ti
-      POSTGRES_DB: portal_ti
+      POSTGRES_USER: ${POSTGRES_USER:-portal_ti}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-portal_ti}
+      POSTGRES_DB: ${POSTGRES_DB:-portal_ti}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - portal_ti_pgdata:/var/lib/postgresql/data
+      - access_pgdata:/var/lib/postgresql/data
       - ./backend/sql/001_ddl.sql:/docker-entrypoint-initdb.d/001_ddl.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U portal_ti -d portal_ti"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-portal_ti} -d ${POSTGRES_DB:-portal_ti}"]
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - access_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: access-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - access_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - access_net
 
   api:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: portal_ti_api
-    env_file:
-      - ./backend/.env
+    image: access-api:latest
+    container_name: access-api
+    restart: unless-stopped
+    env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://portal_ti:portal_ti@db:5432/portal_ti
-      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      APP_ENV: ${APP_ENV:-production}
+      DEBUG: ${DEBUG:-false}
+      DATABASE_URL: ${DATABASE_URL:?Defina DATABASE_URL no .env}
+      REDIS_URL: ${REDIS_URL:-redis://access-redis:6379/0}
+      CORS_ORIGINS: ${CORS_ORIGINS:?Defina CORS_ORIGINS no .env}
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
+      AZURE_ALLOWED_AUDIENCES: ${AZURE_ALLOWED_AUDIENCES:-}
+      CORPORATE_EMAIL_DOMAINS: ${CORPORATE_EMAIL_DOMAINS:-diroma.com.br}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-luis.figueiredo@diroma.com.br}
+      AUTH_DISABLED: ${AUTH_DISABLED:-false}
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     depends_on:
-      db:
+      redis:
         condition: service_healthy
-    volumes:
-      - ./backend:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - access_net
+
+  # Só arquivos estáticos. Seu nginx do servidor faz proxy → :8080 e /api → :8000
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        VITE_API_BASE_URL: /api/v1
+        VITE_AZURE_CLIENT_ID: ${VITE_AZURE_CLIENT_ID:-}
+        VITE_AZURE_TENANT_ID: ${VITE_AZURE_TENANT_ID:-}
+        VITE_AZURE_REDIRECT_URI: ${VITE_AZURE_REDIRECT_URI:-}
+        VITE_AZURE_API_SCOPE: ${VITE_AZURE_API_SCOPE:-}
+        VITE_ENABLE_DEMO_LOGIN: ${VITE_ENABLE_DEMO_LOGIN:-false}
+    image: access-web:latest
+    container_name: access-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+    networks:
+      - access_net
 
 volumes:
-  portal_ti_pgdata:
+  access_pgdata:
+  access_redis:
+
+networks:
+  access_net:
+    name: access_net
+    driver: bridge
