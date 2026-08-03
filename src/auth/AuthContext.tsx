@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { MsalProvider, useMsal } from '@azure/msal-react';
 import { PublicClientApplication } from '@azure/msal-browser';
 import { UserProfile, MsalConfigState } from '../types';
-import { createMsalInstance, getStoredMsalSettings, loginRequest, saveMsalSettings } from './msalConfig';
+import { createMsalInstance, getStoredMsalSettings, isSecureAuthContext, loginRequest, saveMsalSettings } from './msalConfig';
 import { acquireApiAccessToken, setAccessTokenProvider, setMsalInstance, api } from '../api/client';
 
 /** Contas com papel admin fixo no Portal TI diRoma */
@@ -23,6 +23,8 @@ interface AuthContextType {
   msalSettings: MsalConfigState;
   updateMsalSettings: (settings: MsalConfigState) => void;
   getAccessToken: () => Promise<string | null>;
+  /** false quando aberto via http://IP — MSAL não funciona */
+  secureContext: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -201,6 +203,55 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
         msalSettings,
         updateMsalSettings,
         getAccessToken,
+        secureContext: true,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+/** Sem Web Crypto (http://IP): não instancia MSAL — evita crash crypto_nonexistent */
+const AuthProviderInsecure: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const [msalSettings, setMsalSettings] = useState<MsalConfigState>(getStoredMsalSettings);
+  const [user, setUser] = useState<UserProfile | null>(null);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('onboarding_diroma_session');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as UserProfile;
+        if (parsed?.email && resolveUserRole(parsed.email) === 'admin') {
+          setUser({ ...parsed, role: 'admin', isAuthenticated: true });
+        }
+      } catch {
+        localStorage.removeItem('onboarding_diroma_session');
+      }
+    }
+  }, []);
+
+  const loginWithMicrosoft = async () => {
+    throw new Error(
+      'Microsoft Entra ID exige HTTPS. Use https://access.diroma.com.br (nginx). http://IP:porta não é contexto seguro para o login Microsoft.'
+    );
+  };
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        loginWithMicrosoft,
+        logout: () => {
+          setUser(null);
+          localStorage.removeItem('onboarding_diroma_session');
+        },
+        msalSettings,
+        updateMsalSettings: (s) => {
+          saveMsalSettings(s);
+          setMsalSettings(s);
+        },
+        getAccessToken: async () => null,
+        secureContext: false,
       }}
     >
       {children}
@@ -210,7 +261,19 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [msalSettings, setMsalSettings] = useState<MsalConfigState>(getStoredMsalSettings);
-  const [msalInstance] = useState(() => createMsalInstance(msalSettings));
+  const secure = isSecureAuthContext();
+  const [msalInstance] = useState(() => {
+    if (!isSecureAuthContext()) return null;
+    try {
+      return createMsalInstance(getStoredMsalSettings());
+    } catch {
+      return null;
+    }
+  });
+
+  if (!secure || !msalInstance) {
+    return <AuthProviderInsecure>{children}</AuthProviderInsecure>;
+  }
 
   return (
     <MsalProvider instance={msalInstance}>

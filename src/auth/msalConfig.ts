@@ -31,7 +31,21 @@ export const saveMsalSettings = (settings: MsalConfigState) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 };
 
+/** MSAL exige Web Crypto — só em https:// ou http://localhost */
+export function isSecureAuthContext(): boolean {
+  if (typeof window === 'undefined') return true;
+  if (window.isSecureContext) return true;
+  const host = window.location.hostname;
+  return host === 'localhost' || host === '127.0.0.1';
+}
+
 export const createMsalInstance = (settings: MsalConfigState = getStoredMsalSettings()) => {
+  if (!isSecureAuthContext()) {
+    throw new Error(
+      'Microsoft login exige HTTPS (ou localhost). Acesse pelo domínio https://access.diroma.com.br — http://IP não funciona com Entra ID.'
+    );
+  }
+
   const msalConfig: Configuration = {
     auth: {
       clientId: settings.clientId || envMsalConfig.auth.clientId,

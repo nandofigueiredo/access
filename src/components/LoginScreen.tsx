@@ -10,7 +10,7 @@ interface LoginScreenProps {
 const FUNDO_SRC = '/img/fundo.jpg';
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenSettings }) => {
-  const { loginWithMicrosoft } = useAuth();
+  const { loginWithMicrosoft, secureContext } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,6 +58,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenSettings }) => {
           </div>
 
           <div className="mt-10 space-y-4">
+            {!secureContext && (
+              <div className="text-[12px] text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2.5 leading-relaxed">
+                <strong>HTTPS obrigatório para Microsoft.</strong> Você abriu via{' '}
+                <code className="text-[11px]">http://IP</code>, que não é contexto seguro.
+                Acesse <strong>https://access.diroma.com.br</strong> (nginx com SSL).
+              </div>
+            )}
+
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 text-center">
               Acesso exclusivo via Microsoft Entra ID
             </p>
@@ -66,7 +74,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenSettings }) => {
               id="btn-login-microsoft"
               type="button"
               onClick={handleMicrosoftLogin}
-              disabled={isLoading}
+              disabled={isLoading || !secureContext}
               className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-50 text-slate-800 font-semibold py-3.5 px-4 rounded-md border border-slate-300 shadow-sm transition active:scale-[0.99] disabled:opacity-60"
             >
               <svg className="w-5 h-5 shrink-0" viewBox="0 0 21 21" aria-hidden>
