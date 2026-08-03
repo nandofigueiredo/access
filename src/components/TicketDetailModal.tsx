@@ -19,6 +19,8 @@ import { createInitialWorkflow } from '../services/workflowEngine';
 import React, { useEffect, useState } from 'react';
 import { Ticket, TicketStatus, ToastMessage } from '../types';
 import { formatDateToBR, formatDateTimeToBR, evaluateOnboardingSLA } from '../utils/formatters';
+import { useAuth } from '../auth/AuthContext';
+import { can } from '../auth/roles';
 
 interface TicketDetailModalProps {
   ticket: Ticket;
@@ -35,6 +37,8 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
   addToast,
   onPrintTerm,
 }) => {
+  const { user } = useAuth();
+  const canEditTI = can(user?.role, 'tickets.checklist') || can(user?.role, 'tickets.updateStatus');
   const isOnboarding = ticket.type === 'onboarding';
   const [activePanel, setActivePanel] = useState<'workflow' | 'dados' | 'checklist'>('workflow');
 
@@ -79,6 +83,14 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
   };
 
   const handleSaveITChanges = () => {
+    if (!canEditTI) {
+      addToast({
+        type: 'warning',
+        title: 'Sem permissão',
+        message: 'Seu perfil não pode alterar status ou checklist TI.',
+      });
+      return;
+    }
     const updatedTicket: Ticket = {
       ...ticket,
       status,
@@ -177,6 +189,8 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
+              {canEditTI ? (
+                <>
               <button
                 onClick={() => setStatus('Pendente TI')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
@@ -227,6 +241,10 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
               >
                 Concluído
               </button>
+                </>
+              ) : (
+                <span className="text-[11px] text-slate-500">Somente leitura do status</span>
+              )}
             </div>
           </div>
 
@@ -570,13 +588,15 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
             >
               Fechar
             </button>
-            <button
-              onClick={handleSaveITChanges}
-              className="flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-xs transition"
-            >
-              <Save className="w-4 h-4" />
-              <span>Salvar Alterações TI</span>
-            </button>
+            {canEditTI && (
+              <button
+                onClick={handleSaveITChanges}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-xs transition"
+              >
+                <Save className="w-4 h-4" />
+                <span>Salvar Alterações TI</span>
+              </button>
+            )}
           </div>
         </div>
       </div>

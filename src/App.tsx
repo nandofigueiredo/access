@@ -17,6 +17,7 @@ import { Ticket, TicketStatus, ToastMessage, OnboardingData, OffboardingData } f
 import { AppPage } from './types/catalog';
 import { api, USE_API } from './api/client';
 import { createInitialWorkflow } from './services/workflowEngine';
+import { can, canAccessPage, defaultPageForRole } from './auth/roles';
 
 const POLL_MS = 8000;
 
@@ -270,12 +271,25 @@ const AppContent: React.FC = () => {
     );
   }
 
+  useEffect(() => {
+    if (!user?.isAuthenticated) return;
+    if (!canAccessPage(user.role, activeTab)) {
+      setActiveTab(defaultPageForRole(user.role));
+    }
+  }, [user?.isAuthenticated, user?.role, activeTab]);
+
   const handleAddClick = () => {
-    if (activeTab === 'offboarding') {
+    if (activeTab === 'offboarding' && can(user?.role, 'tickets.create.offboarding')) {
       setActiveTab('offboarding');
       return;
     }
-    setActiveTab('onboarding');
+    if (can(user?.role, 'tickets.create.onboarding')) {
+      setActiveTab('onboarding');
+      return;
+    }
+    if (can(user?.role, 'tickets.create.offboarding')) {
+      setActiveTab('offboarding');
+    }
   };
 
   return (
@@ -323,14 +337,18 @@ const AppContent: React.FC = () => {
               onSelectTicket={(ticket) => setSelectedTicket(ticket)}
               onUpdateStatus={handleUpdateStatus}
               onDeleteTicket={handleDeleteTicket}
-              onNavigateNewOnboarding={() => setActiveTab('onboarding')}
-              onNavigateNewOffboarding={() => setActiveTab('offboarding')}
+              onNavigateNewOnboarding={() => {
+                if (can(user?.role, 'tickets.create.onboarding')) setActiveTab('onboarding');
+              }}
+              onNavigateNewOffboarding={() => {
+                if (can(user?.role, 'tickets.create.offboarding')) setActiveTab('offboarding');
+              }}
               addToast={addToast}
               onPrintTerm={(ticket) => setPrintTicket(ticket)}
             />
           )}
 
-          {activeTab === 'onboarding' && (
+          {activeTab === 'onboarding' && canAccessPage(user.role, 'onboarding') && (
             <div className="bg-white border border-[#f0f0f0] p-4 sm:p-6">
               <OnboardingForm
                 onSubmitTicket={handleAddTicket}
@@ -340,7 +358,7 @@ const AppContent: React.FC = () => {
             </div>
           )}
 
-          {activeTab === 'offboarding' && (
+          {activeTab === 'offboarding' && canAccessPage(user.role, 'offboarding') && (
             <div className="bg-white border border-[#f0f0f0] p-4 sm:p-6">
               <OffboardingForm
                 onSubmitTicket={handleAddTicket}
@@ -352,7 +370,8 @@ const AppContent: React.FC = () => {
 
           {activeTab !== 'dashboard' &&
             activeTab !== 'onboarding' &&
-            activeTab !== 'offboarding' && (
+            activeTab !== 'offboarding' &&
+            canAccessPage(user.role, activeTab) && (
               <AdminRouter
                 page={activeTab}
                 addToast={addToast}

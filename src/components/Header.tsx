@@ -2,6 +2,7 @@ import React from 'react';
 import { useAuth } from '../auth/AuthContext';
 import { LogOut, Search, Settings, ChevronRight } from 'lucide-react';
 import { AppPage } from '../types/catalog';
+import { can, canAccessPage, roleLabel } from '../auth/roles';
 
 interface HeaderProps {
   onOpenSettings: () => void;
@@ -54,8 +55,10 @@ function initials(name: string) {
 
 export const Header: React.FC<HeaderProps> = ({ onOpenSettings, activeTab, onAddClick }) => {
   const { user, logout } = useAuth();
-  const roleLabel = user?.role === 'admin' ? 'super-admin' : user?.role || 'user';
   const meta = LABELS[activeTab] || { section: 'Sistema', crumb: String(activeTab) };
+  const canAdd =
+    can(user?.role, 'tickets.create.onboarding') || can(user?.role, 'tickets.create.offboarding');
+  const canManageEntra = can(user?.role, 'entra.manage');
 
   return (
     <header className="bg-white border-b border-[#f0f0f0] sticky top-0 z-30 px-4 py-2.5">
@@ -69,7 +72,9 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, activeTab, onAdd
             <span className="text-slate-800 font-medium">{meta.crumb}</span>
           </nav>
 
-          {(activeTab === 'dashboard' || activeTab === 'onboarding' || activeTab === 'offboarding') && (
+          {canAdd &&
+            (canAccessPage(user?.role, 'onboarding') || canAccessPage(user?.role, 'offboarding')) &&
+            (activeTab === 'dashboard' || activeTab === 'onboarding' || activeTab === 'offboarding') && (
             <button
               type="button"
               onClick={onAddClick}
@@ -92,17 +97,19 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, activeTab, onAdd
 
           {user && (
             <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
-              <button
-                type="button"
-                onClick={onOpenSettings}
-                className="p-1.5 text-slate-500 hover:text-[#002d5b] rounded hover:bg-slate-50"
-                title="Configurações MSAL"
-              >
-                <Settings className="w-4 h-4" />
-              </button>
+              {canManageEntra && (
+                <button
+                  type="button"
+                  onClick={onOpenSettings}
+                  className="p-1.5 text-slate-500 hover:text-[#002d5b] rounded hover:bg-slate-50"
+                  title="Configurações MSAL"
+                >
+                  <Settings className="w-4 h-4" />
+                </button>
+              )}
 
               <div className="hidden md:block text-right leading-tight">
-                <div className="text-[11px] font-semibold text-slate-800">{roleLabel}</div>
+                <div className="text-[11px] font-semibold text-slate-800">{roleLabel(user.role)}</div>
                 <div className="text-[10px] text-slate-400 truncate max-w-[140px]">{user.email}</div>
               </div>
 

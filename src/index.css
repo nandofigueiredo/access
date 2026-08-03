@@ -73,6 +73,33 @@ body {
   background: #e6f7ff;
 }
 
+/*
+ * Formulários dark (onboarding/offboarding): body usa color #1f1f1f,
+ * então spans/labels sem classe de cor ficam ilegíveis sobre slate-950.
+ */
+.form-surface-dark {
+  color: #f1f5f9; /* slate-100 — herança para spans sem text-* */
+}
+
+/* labels e textos secundários — mais claros no fundo escuro */
+.form-surface-dark .text-slate-300 {
+  color: #e2e8f0 !important; /* ≈ slate-200 */
+}
+
+.form-surface-dark .text-slate-400 {
+  color: #cbd5e1 !important; /* ≈ slate-300 */
+}
+
+.form-surface-dark .text-slate-500 {
+  color: #94a3b8 !important; /* ≈ slate-400 */
+}
+
+.form-surface-dark input::placeholder,
+.form-surface-dark textarea::placeholder {
+  color: #94a3b8 !important;
+  opacity: 1;
+}
+
 /* Logo SVG branca → navy diRoma (#002d5b) em fundos claros */
 .diroma-logo-navy {
   filter: brightness(0) saturate(100%) invert(12%) sepia(60%) saturate(2500%) hue-rotate(195deg) brightness(90%) contrast(105%);

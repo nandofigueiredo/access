@@ -43,28 +43,44 @@ def _domain_allowed(email: str, settings: Settings) -> bool:
 
 
 def _resolve_role(email: str, claims: dict[str, Any]) -> str:
+    """
+    Admin = equipe N3 apenas (ADMIN_EMAILS + prefixo n3.).
+    Demais papéis por claims Entra ou prefixo do e-mail.
+    Default @diroma.com.br = viewer (sem elevação automática).
+    """
     normalized = email.strip().lower()
+    local = normalized.split("@")[0]
     admin_emails = {
         e.strip().lower()
         for e in (get_settings().admin_emails or "").split(",")
         if e.strip()
     }
-    if normalized in admin_emails or normalized == "luis.figueiredo@diroma.com.br":
+    admin_emails.add("luis.figueiredo@diroma.com.br")
+    admin_emails.add("n3.admin@diroma.com.br")
+
+    if normalized in admin_emails or local.startswith("n3.") or local.startswith("admin.n3"):
         return "admin"
 
     roles = claims.get("roles") or []
     if isinstance(roles, list):
         lowered = {str(r).lower() for r in roles}
-        for candidate in ("admin", "ti", "rh", "gestor"):
+        # Mapear app roles do Entra
+        if "admin" in lowered or "n3" in lowered:
+            return "admin"
+        for candidate in ("ti", "rh", "gestor", "viewer"):
             if candidate in lowered:
                 return candidate
-    local = email.split("@")[0]
-    if local.startswith(("ti.", "admin.")):
-        return "ti"
-    if local.startswith("rh."):
+        if "service_desk" in lowered or "servicedesk" in lowered:
+            return "ti"
+
+    if local.startswith("rh.") or ".rh" in local:
         return "rh"
-    if normalized.endswith("@diroma.com.br"):
+    if local.startswith(("gestor.", "manager.")):
+        return "gestor"
+    if local.startswith(("ti.", "sd.", "servicedesk.")):
         return "ti"
+    if local.startswith("viewer.") or local == "viewer":
+        return "viewer"
     return "viewer"
 
 

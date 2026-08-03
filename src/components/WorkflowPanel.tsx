@@ -20,6 +20,7 @@ import {
   Lock,
   Mail,
 } from 'lucide-react';
+import { can } from '../auth/roles';
 
 interface Props {
   ticket: Ticket;
@@ -39,6 +40,9 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
   const { user } = useAuth();
   const { smtp, sendMail } = useWorkflowMail();
   const actor = user?.email || user?.name || 'operador';
+  const canSD = can(user?.role, 'workflow.serviceDesk');
+  const canN3 = can(user?.role, 'workflow.n3');
+  const canOperate = canSD || canN3;
   const [handoffNote, setHandoffNote] = useState('');
   const [ipInfo, setIpInfo] = useState('');
 
@@ -226,9 +230,9 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
         </div>
       </div>
 
-      {wf.stage !== 'completed' && (
+      {wf.stage !== 'completed' && canOperate && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {(wf.stage === 'awaiting_service_desk' || wf.currentOwner !== 'service_desk') && (
+          {canSD && (wf.stage === 'awaiting_service_desk' || wf.currentOwner !== 'service_desk') && (
             <button
               type="button"
               onClick={handleClaim}
@@ -237,30 +241,47 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
               <Headphones className="w-4 h-4" /> Service Desk assumir
             </button>
           )}
-          <button
-            type="button"
-            onClick={handleOpenInfra}
-            className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold text-white bg-[#722ed1] hover:bg-[#531dab]"
-          >
-            <Shield className="w-4 h-4" /> Abrir N3 Infra/Segurança
-          </button>
-          <button
-            type="button"
-            onClick={handleOpenNetworks}
-            className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold text-white bg-[#fa8c16] hover:bg-[#d46b08]"
-          >
-            <Network className="w-4 h-4" /> Abrir N3 Redes (IP)
-          </button>
-          <button
-            type="button"
-            disabled={!canFinalize}
-            onClick={handleFinalize}
-            className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed"
-            title={!canFinalize ? 'Conclua todos os handoffs N3 antes. Somente SD finaliza.' : 'Fechamento exclusivo Service Desk'}
-          >
-            <Lock className="w-4 h-4" /> Finalizar (somente SD)
-          </button>
+          {canSD && (
+            <button
+              type="button"
+              onClick={handleOpenInfra}
+              className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold text-white bg-[#722ed1] hover:bg-[#531dab]"
+            >
+              <Shield className="w-4 h-4" /> Abrir N3 Infra/Segurança
+            </button>
+          )}
+          {canSD && (
+            <button
+              type="button"
+              onClick={handleOpenNetworks}
+              className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold text-white bg-[#fa8c16] hover:bg-[#d46b08]"
+            >
+              <Network className="w-4 h-4" /> Abrir N3 Redes (IP)
+            </button>
+          )}
+          {canSD && (
+            <button
+              type="button"
+              disabled={!canFinalize}
+              onClick={handleFinalize}
+              className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={!canFinalize ? 'Conclua todos os handoffs N3 antes. Somente SD finaliza.' : 'Fechamento exclusivo Service Desk'}
+            >
+              <Lock className="w-4 h-4" /> Finalizar (somente SD)
+            </button>
+          )}
+          {canN3 && !canSD && (
+            <p className="sm:col-span-2 text-[12px] text-violet-700 bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
+              Perfil Admin N3: conclua os handoffs abaixo. Abertura e fechamento ficam com o Service Desk.
+            </p>
+          )}
         </div>
+      )}
+
+      {!canOperate && wf.stage !== 'completed' && (
+        <p className="text-[12px] text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">
+          Seu perfil tem apenas visualização do workflow. Operação fica com Service Desk e Admin N3.
+        </p>
       )}
 
       <div>
@@ -316,7 +337,7 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
                   ))}
                 </ul>
               )}
-              {(h.status === 'open' || h.status === 'in_progress') && (
+              {(h.status === 'open' || h.status === 'in_progress') && (canN3 || canSD) && (
                 <div className="mt-2 flex gap-2">
                   {h.status === 'open' && (
                     <button

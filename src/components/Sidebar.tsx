@@ -40,6 +40,7 @@ import { DiRomaLogo } from './DiRomaLogo';
 import { Ticket as TicketType } from '../types';
 import { AppPage } from '../types/catalog';
 import { useAuth } from '../auth/AuthContext';
+import { canAccessPage } from '../auth/roles';
 
 interface SidebarProps {
   activeTab: AppPage;
@@ -49,7 +50,7 @@ interface SidebarProps {
   onToggleCollapse?: () => void;
 }
 
-type NavItem = { id: AppPage; label: string; icon: React.ReactNode; adminOnly?: boolean };
+type NavItem = { id: AppPage; label: string; icon: React.ReactNode };
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
@@ -59,7 +60,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
 }) => {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const role = user?.role;
+  const showAdmin = canAccessPage(role, 'admin-users');
+  const showConfig = canAccessPage(role, 'config-general');
   const [menuSearch, setMenuSearch] = useState('');
   const [open, setOpen] = useState({
     assistencia: true,
@@ -84,36 +87,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
       { id: 'tools-terms', label: 'Termos / Templates', icon: <FileText className="w-3.5 h-3.5" /> },
     ];
     const administracao: NavItem[] = [
-      { id: 'admin-users', label: 'Usuários & Perfis', icon: <Users className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'admin-units', label: 'Unidades', icon: <Building2 className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'admin-managers', label: 'Gestores', icon: <UserCog className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'admin-queues', label: 'Filas Service Desk', icon: <Layers className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'admin-audit', label: 'Auditoria', icon: <ScrollText className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'admin-domains', label: 'Domínios', icon: <Globe className="w-3.5 h-3.5" />, adminOnly: true },
+      { id: 'admin-users', label: 'Usuários & Perfis', icon: <Users className="w-3.5 h-3.5" /> },
+      { id: 'admin-units', label: 'Unidades', icon: <Building2 className="w-3.5 h-3.5" /> },
+      { id: 'admin-managers', label: 'Gestores', icon: <UserCog className="w-3.5 h-3.5" /> },
+      { id: 'admin-queues', label: 'Filas Service Desk', icon: <Layers className="w-3.5 h-3.5" /> },
+      { id: 'admin-audit', label: 'Auditoria', icon: <ScrollText className="w-3.5 h-3.5" /> },
+      { id: 'admin-domains', label: 'Domínios', icon: <Globe className="w-3.5 h-3.5" /> },
     ];
     const configuracao: NavItem[] = [
-      { id: 'config-fields', label: 'Campos Automatizados', icon: <FormInput className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-departments', label: 'Departamentos', icon: <Building2 className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-positions', label: 'Cargos', icon: <Briefcase className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-workmodes', label: 'Modalidades', icon: <SlidersHorizontal className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-hardware', label: 'Perfis Hardware', icon: <Laptop className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-peripherals', label: 'Periféricos', icon: <MousePointer2 className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-systems', label: 'Sistemas & Acessos', icon: <AppWindow className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-checklist-onb', label: 'Checklist Onboarding', icon: <ListChecks className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-checklist-off', label: 'Checklist Offboarding', icon: <ListChecks className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-statuses', label: 'Status & Workflow', icon: <Flag className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-assets', label: 'Tipos de Ativos', icon: <Package className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-return', label: 'Devolução', icon: <Truck className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-sla', label: 'SLA', icon: <Timer className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-smtp', label: 'SMTP / E-mail', icon: <Server className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-workflow', label: 'Fluxo multiárea', icon: <GitBranch className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-entra', label: 'Entra ID / SSO', icon: <KeyRound className="w-3.5 h-3.5" />, adminOnly: true },
-      { id: 'config-general', label: 'Geral', icon: <Settings className="w-3.5 h-3.5" />, adminOnly: true },
+      { id: 'config-fields', label: 'Campos Automatizados', icon: <FormInput className="w-3.5 h-3.5" /> },
+      { id: 'config-departments', label: 'Departamentos', icon: <Building2 className="w-3.5 h-3.5" /> },
+      { id: 'config-positions', label: 'Cargos', icon: <Briefcase className="w-3.5 h-3.5" /> },
+      { id: 'config-workmodes', label: 'Modalidades', icon: <SlidersHorizontal className="w-3.5 h-3.5" /> },
+      { id: 'config-hardware', label: 'Perfis Hardware', icon: <Laptop className="w-3.5 h-3.5" /> },
+      { id: 'config-peripherals', label: 'Periféricos', icon: <MousePointer2 className="w-3.5 h-3.5" /> },
+      { id: 'config-systems', label: 'Sistemas & Acessos', icon: <AppWindow className="w-3.5 h-3.5" /> },
+      { id: 'config-checklist-onb', label: 'Checklist Onboarding', icon: <ListChecks className="w-3.5 h-3.5" /> },
+      { id: 'config-checklist-off', label: 'Checklist Offboarding', icon: <ListChecks className="w-3.5 h-3.5" /> },
+      { id: 'config-statuses', label: 'Status & Workflow', icon: <Flag className="w-3.5 h-3.5" /> },
+      { id: 'config-assets', label: 'Tipos de Ativos', icon: <Package className="w-3.5 h-3.5" /> },
+      { id: 'config-return', label: 'Devolução', icon: <Truck className="w-3.5 h-3.5" /> },
+      { id: 'config-sla', label: 'SLA', icon: <Timer className="w-3.5 h-3.5" /> },
+      { id: 'config-smtp', label: 'SMTP / E-mail', icon: <Server className="w-3.5 h-3.5" /> },
+      { id: 'config-workflow', label: 'Fluxo multiárea', icon: <GitBranch className="w-3.5 h-3.5" /> },
+      { id: 'config-entra', label: 'Entra ID / SSO', icon: <KeyRound className="w-3.5 h-3.5" /> },
+      { id: 'config-general', label: 'Geral', icon: <Settings className="w-3.5 h-3.5" /> },
     ];
 
     const filter = (items: NavItem[]) =>
       items.filter((i) => {
-        if (i.adminOnly && !isAdmin) return false;
+        if (!canAccessPage(role, i.id)) return false;
         if (!menuSearch.trim()) return true;
         return i.label.toLowerCase().includes(menuSearch.toLowerCase());
       });
@@ -124,7 +127,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       administracao: filter(administracao),
       configuracao: filter(configuracao),
     };
-  }, [isAdmin, menuSearch]);
+  }, [role, menuSearch]);
 
   const itemClass = (active: boolean) =>
     `w-full flex items-center gap-2.5 px-3 py-2 text-[13px] transition rounded-sm ${
@@ -215,10 +218,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <div className="pt-2 px-2 py-1.5 text-[11px] uppercase tracking-wider text-white/40 font-semibold">Sistema</div>
         <Section title="Ferramentas" icon={<Wrench className="w-4 h-4" />} openKey="ferramentas" items={sections.ferramentas} />
-        {isAdmin && (
+        {showAdmin && (
           <Section title="Administração" icon={<Shield className="w-4 h-4" />} openKey="administracao" items={sections.administracao} />
         )}
-        {isAdmin && (
+        {showConfig && (
           <Section title="Configuração" icon={<Settings className="w-4 h-4" />} openKey="configuracao" items={sections.configuracao} />
         )}
       </nav>

@@ -11,6 +11,8 @@ import {
   ChevronRight,
   ArrowUpDown,
 } from 'lucide-react';
+import { useAuth } from '../auth/AuthContext';
+import { can } from '../auth/roles';
 
 interface DashboardProps {
   tickets: Ticket[];
@@ -35,6 +37,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
   addToast,
   onPrintTerm,
 }) => {
+  const { user } = useAuth();
+  const canUpdate = can(user?.role, 'tickets.updateStatus');
+  const canDelete = can(user?.role, 'tickets.delete');
+  const canCreateOnb = can(user?.role, 'tickets.create.onboarding');
+  const canCreateOff = can(user?.role, 'tickets.create.offboarding');
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | TicketType>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | TicketStatus>('all');
@@ -164,20 +171,24 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <option value="Pronta p/ Fechamento">Pronta p/ Fechamento</option>
             <option value="Concluído">Concluído</option>
           </select>
-          <button
-            type="button"
-            onClick={onNavigateNewOnboarding}
-            className="text-[12px] font-semibold text-[#1890ff] hover:underline"
-          >
-            + Onboarding
-          </button>
-          <button
-            type="button"
-            onClick={onNavigateNewOffboarding}
-            className="text-[12px] font-semibold text-[#1890ff] hover:underline"
-          >
-            + Offboarding
-          </button>
+          {canCreateOnb && (
+            <button
+              type="button"
+              onClick={onNavigateNewOnboarding}
+              className="text-[12px] font-semibold text-[#1890ff] hover:underline"
+            >
+              + Onboarding
+            </button>
+          )}
+          {canCreateOff && (
+            <button
+              type="button"
+              onClick={onNavigateNewOffboarding}
+              className="text-[12px] font-semibold text-[#1890ff] hover:underline"
+            >
+              + Offboarding
+            </button>
+          )}
         </div>
       </div>
 
@@ -233,17 +244,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <td className="py-2.5 px-3" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-1.5">
                           <span className={`w-2 h-2 rounded-full ${statusDot(ticket.status)}`} />
-                          <select
-                            value={ticket.status}
-                            onChange={(e) => onUpdateStatus(ticket.id, e.target.value as TicketStatus)}
-                            className="bg-transparent border-0 text-[12px] font-medium focus:outline-none cursor-pointer"
-                          >
-                            <option value="Pendente TI">Pendente TI</option>
-                            <option value="Em Andamento">Em Andamento</option>
-                            <option value="Aguardando N3">Aguardando N3</option>
-                            <option value="Pronta p/ Fechamento">Pronta p/ Fechamento</option>
-                            <option value="Concluído">Concluído</option>
-                          </select>
+                          {canUpdate ? (
+                            <select
+                              value={ticket.status}
+                              onChange={(e) => onUpdateStatus(ticket.id, e.target.value as TicketStatus)}
+                              className="bg-transparent border-0 text-[12px] font-medium focus:outline-none cursor-pointer"
+                            >
+                              <option value="Pendente TI">Pendente TI</option>
+                              <option value="Em Andamento">Em Andamento</option>
+                              <option value="Aguardando N3">Aguardando N3</option>
+                              <option value="Pronta p/ Fechamento">Pronta p/ Fechamento</option>
+                              <option value="Concluído">Concluído</option>
+                            </select>
+                          ) : (
+                            <span className="text-[12px] font-medium">{ticket.status}</span>
+                          )}
                         </div>
                       </td>
                       <td className="py-2.5 px-3 text-slate-500 whitespace-nowrap">
@@ -267,14 +282,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           >
                             <FileText className="w-3.5 h-3.5" />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => onDeleteTicket(ticket.id)}
-                            className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded"
-                            title="Excluir"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          {canDelete && (
+                            <button
+                              type="button"
+                              onClick={() => onDeleteTicket(ticket.id)}
+                              className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded"
+                              title="Excluir"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

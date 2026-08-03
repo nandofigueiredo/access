@@ -199,7 +199,7 @@ export const OnboardingForm: React.FC<OnboardingFormProps> = ({ onSubmitTicket, 
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="form-surface-dark max-w-4xl mx-auto space-y-6">
       {/* Header Banner */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
         <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
@@ -221,7 +221,7 @@ export const OnboardingForm: React.FC<OnboardingFormProps> = ({ onSubmitTicket, 
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form onSubmit={handleSubmit} className="space-y-6 text-slate-100">
         {/* SECTION 1: Dados do Colaborador */}
         <section className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-800 text-slate-200 font-semibold text-sm">
