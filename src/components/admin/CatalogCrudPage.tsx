@@ -79,9 +79,10 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
 
   const openEdit = (item: CatalogItem) => {
     setEditing(item);
-    setName(item.name);
+    setName(item.name.includes('@') ? item.name.split('@')[0].replace(/[._]/g, ' ') : item.name);
     setDescription(item.description || '');
-    setEmail(emailFromMeta(item));
+    const mail = emailFromMeta(item) || (item.name.includes('@') ? item.name.trim().toLowerCase() : '');
+    setEmail(mail);
     setRole(roleFromMeta(item));
     setActive(item.active);
   };
@@ -93,15 +94,29 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
       return;
     }
     if (enableAccessRole) {
-      const normalizedEmail = email.trim().toLowerCase();
+      let normalizedEmail = email.trim().toLowerCase();
+      // Se colaram o e-mail no Nome, recupera
+      if ((!normalizedEmail || !normalizedEmail.includes('@')) && name.trim().includes('@')) {
+        normalizedEmail = name.trim().toLowerCase();
+        setEmail(normalizedEmail);
+      }
       if (!normalizedEmail || !normalizedEmail.includes('@')) {
         addToast({
           type: 'error',
           title: 'E-mail obrigatório',
-          message: 'Informe o e-mail corporativo do operador.',
+          message: 'Informe o e-mail corporativo do operador (campo E-mail).',
         });
         return;
       }
+      const displayName =
+        name.trim().includes('@')
+          ? name
+              .trim()
+              .split('@')[0]
+              .replace(/[._]/g, ' ')
+              .replace(/\b\w/g, (c) => c.toUpperCase())
+          : name.trim();
+
       const duplicate = items.find(
         (i) =>
           i.id !== editing?.id &&
@@ -115,31 +130,42 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
         });
         return;
       }
+
+      const payload: CatalogItem = {
+        id: editing?.id ?? newId(),
+        name: displayName || normalizedEmail,
+        description: roleLabel(role),
+        active,
+        sortOrder: editing?.sortOrder ?? items.length + 1,
+        meta: {
+          ...(editing?.meta || {}),
+          email: normalizedEmail,
+          role,
+        },
+      };
+      onSave(payload);
+      addToast({
+        type: 'success',
+        title: editing ? 'Usuário atualizado' : 'Usuário cadastrado',
+        message: `"${payload.name}" · ${normalizedEmail} · perfil ${roleLabel(role)}.`,
+      });
+      openCreate();
+      return;
     }
 
     const payload: CatalogItem = {
       id: editing?.id ?? newId(),
       name: name.trim(),
-      description: enableAccessRole
-        ? roleLabel(role)
-        : description.trim() || undefined,
+      description: description.trim() || undefined,
       active,
       sortOrder: editing?.sortOrder ?? items.length + 1,
-      meta: enableAccessRole
-        ? {
-            ...(editing?.meta || {}),
-            email: email.trim().toLowerCase(),
-            role,
-          }
-        : editing?.meta,
+      meta: editing?.meta,
     };
     onSave(payload);
     addToast({
       type: 'success',
       title: editing ? 'Item atualizado' : 'Item cadastrado',
-      message: enableAccessRole
-        ? `"${payload.name}" · perfil ${roleLabel(role)}.`
-        : `"${payload.name}" salvo com sucesso.`,
+      message: `"${payload.name}" salvo com sucesso.`,
     });
     openCreate();
   };

@@ -16,67 +16,79 @@ import {
 import { bootMsal, getBootedMsal, loginRequest, MSAL_BOOT_ERROR_KEY } from './msalBoot';
 import { authDebugLog } from './authDebug';
 import { acquireApiAccessToken, setAccessTokenProvider, setMsalInstance, api } from '../api/client';
-import { AccessRole, DEMO_USERS } from './roles';
+import { AccessRole, DEMO_USERS, roleLabel } from './roles';
 
 const CATALOG_STORAGE_KEY = 'portal_ti_system_catalog_v1';
 const SESSION_KEY = 'onboarding_diroma_session';
+const CATALOG_UPDATED_EVENT = 'portal-catalog-updated';
 
-/** Papel cadastrado em Administração → Usuários & Perfis (por e-mail). */
-export function lookupCatalogRole(email: string): AccessRole | null {
+type CatalogUserRow = {
+  id?: string;
+  name?: string;
+  active?: boolean;
+  meta?: { email?: string; role?: string };
+};
+
+function readCatalogUsers(): CatalogUserRow[] {
   try {
     const raw = localStorage.getItem(CATALOG_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as {
-      users?: Array<{ active?: boolean; meta?: { email?: string; role?: string } }>;
-    };
-    const users = parsed?.users;
-    if (!Array.isArray(users)) return null;
-    const normalized = email.trim().toLowerCase();
-    const match = users.find(
-      (u) => u.active !== false && String(u.meta?.email || '').toLowerCase() === normalized
-    );
-    const role = match?.meta?.role;
-    if (
-      role === 'admin' ||
-      role === 'ti' ||
-      role === 'rh' ||
-      role === 'gestor' ||
-      role === 'viewer'
-    ) {
-      return role;
-    }
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { users?: CatalogUserRow[] };
+    return Array.isArray(parsed?.users) ? parsed.users : [];
   } catch {
-    // ignore
+    return [];
+  }
+}
+
+/** Usuário em Administração → Usuários & Perfis (e-mail em meta ou nome=e-mail legado). */
+export function lookupCatalogUser(email: string): CatalogUserRow | null {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return null;
+  return (
+    readCatalogUsers().find((u) => {
+      if (u.active === false) return false;
+      const mail = String(u.meta?.email || '').trim().toLowerCase();
+      const name = String(u.name || '').trim().toLowerCase();
+      return mail === normalized || name === normalized;
+    }) || null
+  );
+}
+
+/** Papel cadastrado em Administração → Usuários & Perfis. */
+export function lookupCatalogRole(email: string): AccessRole | null {
+  const role = lookupCatalogUser(email)?.meta?.role;
+  if (role === 'admin' || role === 'ti' || role === 'rh' || role === 'gestor' || role === 'viewer') {
+    return role;
   }
   return null;
 }
 
 /**
- * Admin (N3) — e-mails explicitamente listados / prefixo n3. nunca perdem admin.
- * Depois: cadastro em Usuários & Perfis → heurística de e-mail.
+ * Admin (N3) fixo nunca perde admin.
+ * Demais operadores: papel do cadastro em Usuários & Perfis (obrigatório).
  */
 export const ADMIN_EMAILS = new Set([
   'luis.figueiredo@diroma.com.br',
   'n3.admin@diroma.com.br',
 ]);
 
-export function resolveUserRole(email: string): AccessRole {
+export function isFixedAdmin(email: string): boolean {
   const normalized = email.trim().toLowerCase();
   const local = normalized.split('@')[0] || '';
+  return ADMIN_EMAILS.has(normalized) || local.startsWith('n3.') || local.startsWith('admin.n3');
+}
 
-  if (ADMIN_EMAILS.has(normalized) || local.startsWith('n3.') || local.startsWith('admin.n3')) {
-    return 'admin';
-  }
+/** Pode entrar: admin fixo OU cadastrado/ativo em Usuários & Perfis. */
+export function isPortalUserAllowed(email: string): boolean {
+  if (isFixedAdmin(email)) return true;
+  return lookupCatalogUser(email) !== null;
+}
 
+export function resolveUserRole(email: string): AccessRole {
+  const normalized = email.trim().toLowerCase();
+  if (isFixedAdmin(normalized)) return 'admin';
   const fromCatalog = lookupCatalogRole(normalized);
   if (fromCatalog) return fromCatalog;
-
-  if (local.startsWith('rh.') || local.includes('.rh')) return 'rh';
-  if (local.startsWith('gestor.') || local.startsWith('manager.')) return 'gestor';
-  if (local.startsWith('ti.') || local.startsWith('sd.') || local.startsWith('servicedesk.')) {
-    return 'ti';
-  }
-  if (local.startsWith('viewer.') || local === 'viewer') return 'viewer';
   return 'viewer';
 }
 
@@ -153,7 +165,7 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
   });
   const [authError, setAuthError] = useState<string | null>(bootError);
 
-  // Sincroniza conta MSAL → user (e valida domínio)
+  // Sincroniza conta MSAL → user (domínio + cadastro de perfil)
   useEffect(() => {
     const account = pickAccount(accounts, instance);
     if (!account) return;
@@ -173,11 +185,48 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
       return;
     }
 
+    if (email && !isPortalUserAllowed(email)) {
+      setAuthError(
+        `"${email}" não está cadastrado em Administração → Usuários & Perfis. Peça a um Admin N3 para liberar o acesso com o perfil correto.`
+      );
+      setUser(null);
+      return;
+    }
+
     instance.setActiveAccount(account);
     setUser(buildProfileFromAccount(account));
     localStorage.removeItem(SESSION_KEY);
     setAuthError(null);
   }, [accounts, instance]);
+
+  // Reaplica perfil quando Usuários & Perfis muda (evita visitante com sessão “admin” stale)
+  useEffect(() => {
+    const syncRoleFromCatalog = () => {
+      setUser((prev) => {
+        if (!prev?.email || prev.isDemo) return prev;
+        if (!isPortalUserAllowed(prev.email)) {
+          setAuthError(
+            `"${prev.email}" não está mais ativo em Usuários & Perfis. Peça a um Admin N3 para reativar o acesso.`
+          );
+          return null;
+        }
+        const nextRole = resolveUserRole(prev.email);
+        if (prev.role === nextRole && prev.jobTitle === roleLabel(nextRole)) return prev;
+        return {
+          ...prev,
+          role: nextRole,
+          jobTitle: roleLabel(nextRole),
+          department: nextRole === 'rh' ? 'RH' : prev.department || 'TI',
+        };
+      });
+    };
+    window.addEventListener(CATALOG_UPDATED_EVENT, syncRoleFromCatalog);
+    window.addEventListener('storage', syncRoleFromCatalog);
+    return () => {
+      window.removeEventListener(CATALOG_UPDATED_EVENT, syncRoleFromCatalog);
+      window.removeEventListener('storage', syncRoleFromCatalog);
+    };
+  }, []);
 
   useEffect(() => {
     setMsalInstance(msalInstance);
@@ -196,8 +245,8 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
         if (cancelled || !me?.email) return;
         setUser((prev) => {
           if (!prev) return prev;
-          const apiRole = (me.role as AccessRole) || prev.role;
-          const nextRole = ADMIN_EMAILS.has(prev.email.toLowerCase()) ? 'admin' : apiRole;
+          // Papel vem do cadastro local / admin fixo — API não rebaixa nem eleva à revelia
+          const nextRole = resolveUserRole(prev.email);
           if (
             prev.name === (me.name || prev.name) &&
             prev.role === nextRole &&
@@ -213,7 +262,7 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
             role: nextRole,
             jobTitle: me.jobTitle || prev.jobTitle,
             department: me.department || prev.department,
-            isDemo: me.isDemo ?? prev.isDemo,
+            isDemo: false,
           };
         });
       } catch {

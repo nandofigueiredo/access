@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.database import get_db
+from app.models.settings import AppSetting
 from app.models.user import User
 
 _bearer = HTTPBearer(auto_error=False)
@@ -42,11 +43,53 @@ def _domain_allowed(email: str, settings: Settings) -> bool:
     return domain in settings.allowed_domains
 
 
-def _resolve_role(email: str, claims: dict[str, Any]) -> str:
+def _lookup_catalog_role(catalog: dict[str, Any] | None, email: str) -> str | None:
+    """Papel cadastrado em Administração → Usuários & Perfis (settings.catalog)."""
+    if not catalog or not isinstance(catalog, dict):
+        return None
+    users = catalog.get("users")
+    if not isinstance(users, list):
+        return None
+    normalized = email.strip().lower()
+    valid = {"admin", "ti", "rh", "gestor", "viewer"}
+    for row in users:
+        if not isinstance(row, dict):
+            continue
+        if row.get("active") is False:
+            continue
+        meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+        mail = str(meta.get("email") or "").strip().lower()
+        name = str(row.get("name") or "").strip().lower()
+        if mail != normalized and name != normalized:
+            continue
+        role = str(meta.get("role") or "").strip().lower()
+        if role in valid:
+            return role
+        return "viewer"
+    return None
+
+
+async def _role_from_portal_catalog(db: AsyncSession, email: str) -> tuple[str | None, bool]:
     """
-    Admin = equipe N3 apenas (ADMIN_EMAILS + prefixo n3.).
-    Demais papéis por claims Entra ou prefixo do e-mail.
-    Default @diroma.com.br = viewer (sem elevação automática).
+    Retorna (papel|None, catálogo_tem_usuários).
+    Se o catálogo já tem operadores, ausência no cadastro = sem acesso.
+    """
+    result = await db.execute(select(AppSetting).where(AppSetting.key == "catalog"))
+    row = result.scalar_one_or_none()
+    if not row or not isinstance(row.value, dict):
+        return None, False
+    users = row.value.get("users")
+    has_users = isinstance(users, list) and len(users) > 0
+    if not has_users:
+        return None, False
+    return _lookup_catalog_role(row.value, email), True
+
+
+def _resolve_role(email: str, claims: dict[str, Any], catalog_role: str | None = None) -> str:
+    """
+    Admin fixo = equipe N3 (ADMIN_EMAILS + prefixo n3.).
+    Demais: catálogo do portal (Usuários & Perfis) tem prioridade sobre claims Entra.
+    Default @diroma.com.br = viewer.
     """
     normalized = email.strip().lower()
     local = normalized.split("@")[0]
@@ -61,10 +104,12 @@ def _resolve_role(email: str, claims: dict[str, Any]) -> str:
     if normalized in admin_emails or local.startswith("n3.") or local.startswith("admin.n3"):
         return "admin"
 
+    if catalog_role in {"admin", "ti", "rh", "gestor", "viewer"}:
+        return catalog_role
+
     roles = claims.get("roles") or []
     if isinstance(roles, list):
         lowered = {str(r).lower() for r in roles}
-        # Mapear app roles do Entra
         if "admin" in lowered or "n3" in lowered:
             return "admin"
         for candidate in ("ti", "rh", "gestor", "viewer"):
@@ -209,7 +254,29 @@ async def get_current_user(
 
     name = claims.get("name") or email
     oid = claims.get("oid") or claims.get("sub")
-    role = _resolve_role(email, claims)
+    catalog_role, catalog_seeded = await _role_from_portal_catalog(db, email)
+
+    normalized = email.strip().lower()
+    local = normalized.split("@")[0]
+    admin_emails = {
+        e.strip().lower()
+        for e in (settings.admin_emails or "").split(",")
+        if e.strip()
+    }
+    admin_emails.add("luis.figueiredo@diroma.com.br")
+    admin_emails.add("n3.admin@diroma.com.br")
+    is_fixed = normalized in admin_emails or local.startswith("n3.") or local.startswith("admin.n3")
+
+    if catalog_seeded and catalog_role is None and not is_fixed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f'"{email}" não está cadastrado em Administração → Usuários & Perfis. '
+                "Peça a um Admin N3 para liberar o acesso."
+            ),
+        )
+
+    role = _resolve_role(email, claims, catalog_role)
 
     return await get_or_create_user(
         db,

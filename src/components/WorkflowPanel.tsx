@@ -192,37 +192,89 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
 
   const stageMeta = WORKFLOW_STAGES[wf.stage];
   const owner = WORKFLOW_AREAS[wf.currentOwner];
+  const pipelineStages = [
+    'awaiting_service_desk',
+    'in_service_desk',
+    'waiting_n3_integration',
+    'n3_in_progress',
+    'ready_for_sd_closure',
+    'completed',
+  ] as const;
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-sky-100 bg-gradient-to-r from-sky-50 to-white p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div className="text-[11px] font-bold uppercase tracking-wide text-sky-700">Workflow</div>
-            <div className="text-base font-bold text-[#002d5b]">{stageMeta.label}</div>
-            <p className="text-[12px] text-slate-500 mt-0.5">{stageMeta.description}</p>
-          </div>
-          <span className="text-[11px] font-bold text-white px-3 py-1 rounded-full" style={{ background: owner.color }}>
-            Dono atual: {owner.label}
-          </span>
+      <div className="rounded-xl border border-sky-100 bg-gradient-to-br from-[#001529] via-[#002d5b] to-[#0a4a8a] text-white p-4 shadow-sm">
+        <div className="text-[11px] font-bold uppercase tracking-wide text-sky-200">Board do chamado</div>
+        <div className="text-base font-bold mt-0.5">{stageMeta.label}</div>
+        <p className="text-[12px] text-white/75 mt-1 leading-relaxed">{stageMeta.description}</p>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold">
+          {[
+            WORKFLOW_AREAS.requester,
+            WORKFLOW_AREAS.service_desk,
+            WORKFLOW_AREAS.n3_infra_security,
+            WORKFLOW_AREAS.n3_networks,
+            WORKFLOW_AREAS.end_user,
+          ].map((a, idx, arr) => (
+            <React.Fragment key={a.short}>
+              <span
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border ${
+                  owner.short === a.short
+                    ? 'bg-white text-[#002d5b] border-white'
+                    : 'bg-white/10 border-white/15 text-white/90'
+                }`}
+              >
+                {a.short}
+              </span>
+              {idx < arr.length - 1 && <span className="text-white/40">→</span>}
+            </React.Fragment>
+          ))}
         </div>
+        <div className="mt-3 inline-flex items-center gap-2 text-[11px] font-bold px-3 py-1 rounded-full bg-white/15 border border-white/20">
+          Dono atual: {owner.label}
+        </div>
+      </div>
 
-        {/* Mini pipeline */}
-        <div className="mt-4 flex gap-1 overflow-x-auto">
-          {(
-            [
-              'awaiting_service_desk',
-              'in_service_desk',
-              'waiting_n3_integration',
-              'ready_for_sd_closure',
-              'completed',
-            ] as const
-          ).map((s) => {
+      <div className="rounded-xl border border-slate-200 bg-white p-3">
+        <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-2">
+          Onde o processo está parado
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+          {pipelineStages.map((s) => {
+            const meta = WORKFLOW_STAGES[s];
+            const isCurrent = wf.stage === s;
+            const done = meta.order < stageMeta.order || (wf.stage === 'completed' && s === 'completed');
+            return (
+              <div
+                key={s}
+                className={`rounded-lg border px-2.5 py-2 min-h-[72px] ${
+                  isCurrent
+                    ? 'border-[#1890ff] bg-sky-50 shadow-sm ring-1 ring-[#1890ff]/30'
+                    : done
+                      ? 'border-emerald-200 bg-emerald-50/50'
+                      : 'border-slate-100 bg-slate-50/80'
+                }`}
+              >
+                <div
+                  className={`text-[10px] font-bold uppercase tracking-wide ${
+                    isCurrent ? 'text-[#1890ff]' : done ? 'text-emerald-700' : 'text-slate-400'
+                  }`}
+                >
+                  {isCurrent ? 'Aqui agora' : done ? 'Concluído' : 'Aguardando'}
+                </div>
+                <div className={`text-[11px] font-semibold mt-0.5 leading-snug ${isCurrent ? 'text-[#002d5b]' : 'text-slate-600'}`}>
+                  {meta.label}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-3 flex gap-1">
+          {pipelineStages.map((s) => {
             const active = WORKFLOW_STAGES[s].order <= stageMeta.order;
             return (
               <div
                 key={s}
-                className={`flex-1 min-w-[72px] h-1.5 rounded-full ${active ? 'bg-[#1890ff]' : 'bg-slate-200'}`}
+                className={`flex-1 h-1.5 rounded-full ${active ? 'bg-[#1890ff]' : 'bg-slate-200'}`}
                 title={WORKFLOW_STAGES[s].label}
               />
             );
@@ -278,22 +330,24 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
         </div>
       )}
 
-      {!canOperate && wf.stage !== 'completed' && (
-        <p className="text-[12px] text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">
-          Seu perfil tem apenas visualização do workflow. Operação fica com Service Desk e Admin N3.
+      {!canOperate && (
+        <p className="text-[12px] text-slate-600 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">
+          Você está vendo em que etapa o chamado está parado. Ações (assumir, N3, finalizar) ficam com Service Desk e Admin N3.
         </p>
       )}
 
-      <div>
-        <label className="text-[11px] font-semibold text-slate-500">Nota para handoff N3</label>
-        <textarea
-          value={handoffNote}
-          onChange={(e) => setHandoffNote(e.target.value)}
-          rows={2}
-          placeholder="Ex.: Liberar IP fixo na VLAN corporativa + VPN..."
-          className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
-        />
-      </div>
+      {canOperate && (
+        <div>
+          <label className="text-[11px] font-semibold text-slate-500">Nota para handoff N3</label>
+          <textarea
+            value={handoffNote}
+            onChange={(e) => setHandoffNote(e.target.value)}
+            rows={2}
+            placeholder="Ex.: Liberar IP fixo na VLAN corporativa + VPN..."
+            className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
+          />
+        </div>
+      )}
 
       {wf.handoffs.some((h) => h.area === 'n3_networks' && (h.status === 'open' || h.status === 'in_progress')) && (
         <div>

@@ -150,11 +150,18 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
         <div className="flex border-b border-slate-200 bg-white px-4 gap-1 shrink-0">
           {(
             [
-              { id: 'workflow' as const, label: 'Workflow multiárea', icon: <GitBranch className="w-3.5 h-3.5" /> },
-              { id: 'dados' as const, label: 'Dados da solicitação', icon: <FileText className="w-3.5 h-3.5" /> },
-              { id: 'checklist' as const, label: 'Checklist TI', icon: <CheckSquare className="w-3.5 h-3.5" /> },
-            ]
-          ).map((t) => (
+              { id: 'workflow' as const, label: 'Board do chamado', icon: <GitBranch className="w-3.5 h-3.5" />, show: true },
+              { id: 'dados' as const, label: 'Dados da solicitação', icon: <FileText className="w-3.5 h-3.5" />, show: true },
+              {
+                id: 'checklist' as const,
+                label: 'Checklist TI',
+                icon: <CheckSquare className="w-3.5 h-3.5" />,
+                show: canEditTI,
+              },
+            ] as const
+          )
+            .filter((t) => t.show)
+            .map((t) => (
             <button
               key={t.id}
               type="button"
@@ -562,9 +569,12 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
             <textarea
               rows={2}
               value={itNotes}
-              onChange={(e) => setItNotes(e.target.value)}
-              placeholder="Digite observações de atendimento, patrimônio ou rastreio..."
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-900 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none transition"
+              onChange={(e) => canEditTI && setItNotes(e.target.value)}
+              readOnly={!canEditTI}
+              placeholder={canEditTI ? 'Digite observações de atendimento, patrimônio ou rastreio...' : 'Somente leitura'}
+              className={`w-full border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none transition ${
+                canEditTI ? 'bg-slate-50 focus:bg-white focus:border-blue-500' : 'bg-slate-100 text-slate-600 cursor-default'
+              }`}
             />
           </div>
             </>

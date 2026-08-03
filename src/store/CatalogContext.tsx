@@ -6,13 +6,33 @@ import { useAuth } from '../auth/AuthContext';
 
 const STORAGE_KEY = 'portal_ti_system_catalog_v1';
 const POLL_MS = 15000;
+export const CATALOG_UPDATED_EVENT = 'portal-catalog-updated';
+
+function catalogTimestamp(c: SystemCatalog | null | undefined): number {
+  const raw = c?.updatedAt;
+  if (!raw) return 0;
+  const n = Date.parse(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function notifyCatalogUpdated() {
+  try {
+    window.dispatchEvent(new Event(CATALOG_UPDATED_EVENT));
+  } catch {
+    // ignore
+  }
+}
 
 function loadLocalCatalog(): SystemCatalog {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as SystemCatalog;
-      if (parsed?.departments && parsed?.formFields) return parsed;
+      if (parsed?.departments && parsed?.formFields) {
+        const normalized = normalizeCatalog(parsed);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+        return normalized;
+      }
     }
   } catch {
     // ignore
@@ -41,6 +61,59 @@ function normalizeCatalog(value: SystemCatalog): SystemCatalog {
     }
   }
   if (!out.sla || typeof out.sla !== 'object') out.sla = base.sla;
+
+  // Corrige cadastros legados: e-mail no campo Nome e meta.email vazio
+  out.users = (out.users || []).map((u) => {
+    const metaEmail = typeof u.meta?.email === 'string' ? u.meta.email.trim().toLowerCase() : '';
+    const nameLooksEmail = u.name.includes('@');
+    if (!metaEmail && nameLooksEmail) {
+      const email = u.name.trim().toLowerCase();
+      const displayName = email.split('@')[0].replace(/[._]/g, ' ');
+      return {
+        ...u,
+        name: displayName.replace(/\b\w/g, (c) => c.toUpperCase()),
+        meta: {
+          ...(u.meta || {}),
+          email,
+          role: (typeof u.meta?.role === 'string' ? u.meta.role : 'viewer') as string,
+        },
+      };
+    }
+    if (metaEmail && !u.meta?.role) {
+      return { ...u, meta: { ...(u.meta || {}), role: 'viewer' } };
+    }
+    return u;
+  });
+
+  // Garante admin Luis no catálogo
+  const luisEmail = 'luis.figueiredo@diroma.com.br';
+  const hasLuis = out.users.some(
+    (u) => String(u.meta?.email || '').toLowerCase() === luisEmail || u.name.toLowerCase().includes('luis.figueiredo')
+  );
+  if (!hasLuis) {
+    out.users.unshift({
+      id: 'user-luis-admin',
+      name: 'Luis Figueiredo',
+      description: 'Admin N3',
+      active: true,
+      sortOrder: 0,
+      meta: { email: luisEmail, role: 'admin' },
+    });
+  } else {
+    out.users = out.users.map((u) => {
+      const mail = String(u.meta?.email || '').toLowerCase();
+      if (mail === luisEmail) {
+        return {
+          ...u,
+          name: u.name.includes('@') ? 'Luis Figueiredo' : u.name,
+          meta: { ...(u.meta || {}), email: luisEmail, role: 'admin' },
+          active: true,
+        };
+      }
+      return u;
+    });
+  }
+
   return out;
 }
 
@@ -79,6 +152,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const withTs = { ...next, updatedAt: new Date().toISOString() };
       setCatalog(withTs);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(withTs));
+      notifyCatalogUpdated();
       if (opts?.remote === false) return;
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
       saveTimer.current = window.setTimeout(() => {
@@ -94,9 +168,19 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     try {
       const remote = await api.getSetting('catalog');
       if (isValidCatalog(remote.value) && Object.keys(remote.value).length > 0) {
-        const normalized = normalizeCatalog(remote.value);
-        setCatalog(normalized);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+        const normalized = normalizeCatalog(remote.value as SystemCatalog);
+        setCatalog((local) => {
+          const localTs = catalogTimestamp(local);
+          const remoteTs = catalogTimestamp(normalized);
+          // Não sobrescrever cadastro local mais novo (evita sumir usuário acabado de salvar)
+          if (localTs > remoteTs) {
+            void pushRemote(local);
+            return local;
+          }
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+          notifyCatalogUpdated();
+          return normalized;
+        });
       } else {
         // Seed banco com catálogo local na primeira vez
         const local = loadLocalCatalog();
@@ -107,7 +191,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     } finally {
       setSyncing(false);
     }
-  }, [user?.isAuthenticated]);
+  }, [user?.isAuthenticated, pushRemote]);
 
   useEffect(() => {
     if (!user?.isAuthenticated) return;
