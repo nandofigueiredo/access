@@ -80,10 +80,20 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
     return undefined as T;
   }
 
-  const data = await res.json().catch(() => ({}));
+  const data = await res.json().catch(() => null);
   if (!res.ok) {
-    const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || data);
+    const detail =
+      data && typeof data === 'object' && 'detail' in data
+        ? typeof (data as { detail: unknown }).detail === 'string'
+          ? (data as { detail: string }).detail
+          : JSON.stringify((data as { detail: unknown }).detail)
+        : data
+          ? JSON.stringify(data)
+          : `HTTP ${res.status}`;
     throw new Error(detail || `HTTP ${res.status}`);
+  }
+  if (data === null) {
+    throw new Error(`Resposta inválida da API (${res.status}). O proxy /api pode estar apontando para o frontend.`);
   }
   return data as T;
 }
@@ -173,7 +183,14 @@ export const api = {
 
   listAllTickets: async (): Promise<Ticket[]> => {
     const [onb, off] = await Promise.all([api.listOnboarding(), api.listOffboarding()]);
-    return [...onb, ...off]
+    const onbList = Array.isArray(onb) ? onb : [];
+    const offList = Array.isArray(off) ? off : [];
+    if (!Array.isArray(onb) || !Array.isArray(off)) {
+      throw new Error(
+        'API não retornou lista de chamados. Verifique o proxy /api → access-api (NPM ou nginx do container web).'
+      );
+    }
+    return [...onbList, ...offList]
       .map((t) => normalizeTicketDates(t as Ticket))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   },

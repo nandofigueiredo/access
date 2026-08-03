@@ -28,6 +28,22 @@ function isValidCatalog(value: unknown): value is SystemCatalog {
   return Array.isArray(c.departments) && Array.isArray(c.formFields);
 }
 
+/** Garante arrays em todas as chaves de lista (evita "X is not iterable"). */
+function normalizeCatalog(value: SystemCatalog): SystemCatalog {
+  const base = createDefaultCatalog();
+  const keys = Object.keys(base) as (keyof SystemCatalog)[];
+  const out = { ...base, ...value };
+  for (const key of keys) {
+    if (key === 'sla' || key === 'updatedAt') continue;
+    const v = out[key];
+    if (!Array.isArray(v)) {
+      (out as Record<string, unknown>)[key] = Array.isArray(base[key]) ? base[key] : [];
+    }
+  }
+  if (!out.sla || typeof out.sla !== 'object') out.sla = base.sla;
+  return out;
+}
+
 interface CatalogContextValue {
   catalog: SystemCatalog;
   syncing: boolean;
@@ -78,8 +94,9 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     try {
       const remote = await api.getSetting('catalog');
       if (isValidCatalog(remote.value) && Object.keys(remote.value).length > 0) {
-        setCatalog(remote.value);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(remote.value));
+        const normalized = normalizeCatalog(remote.value);
+        setCatalog(normalized);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
       } else {
         // Seed banco com catálogo local na primeira vez
         const local = loadLocalCatalog();
@@ -100,8 +117,10 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [user?.isAuthenticated, pullRemote]);
 
   const activeOptions = useCallback(
-    (key: Exclude<CatalogKey, 'formFields'>) =>
-      [...catalog[key]].filter((i) => i.active).sort((a, b) => a.sortOrder - b.sortOrder),
+    (key: Exclude<CatalogKey, 'formFields'>) => {
+      const list = Array.isArray(catalog[key]) ? catalog[key] : [];
+      return [...list].filter((i) => i.active).sort((a, b) => a.sortOrder - b.sortOrder);
+    },
     [catalog]
   );
 

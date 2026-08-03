@@ -2,7 +2,8 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { MsalProvider, useMsal } from '@azure/msal-react';
 import { PublicClientApplication } from '@azure/msal-browser';
 import { UserProfile, MsalConfigState } from '../types';
-import { createMsalInstance, getStoredMsalSettings, isSecureAuthContext, loginRequest, saveMsalSettings } from './msalConfig';
+import { createMsalInstance, getStoredMsalSettings, isDemoLoginEnabled, isPlaceholderClientId, isSecureAuthContext, loginRequest, saveMsalSettings } from './msalConfig';
+import { InteractionStatus } from '@azure/msal-browser';
 import { acquireApiAccessToken, setAccessTokenProvider, setMsalInstance, api } from '../api/client';
 
 /** Contas com papel admin fixo no Portal TI diRoma */
@@ -72,18 +73,41 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
   msalSettings,
   setMsalSettings,
 }) => {
-  const { instance, accounts } = useMsal();
+  const { instance, accounts, inProgress } = useMsal();
   const [user, setUser] = useState<UserProfile | null>(null);
 
   useEffect(() => {
     setMsalInstance(msalInstance);
     setAccessTokenProvider(async () => {
-      if (!user || (user.email === ADMIN_BOOTSTRAP.email && !msalSettings.configured)) {
-        return null;
-      }
+      if (!user || user.isDemo) return null;
       return acquireApiAccessToken(accounts[0] || null);
     });
-  }, [msalInstance, accounts, user, msalSettings.configured]);
+  }, [msalInstance, accounts, user]);
+
+  // Retorno do loginRedirect (produção / popup bloqueado)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await instance.handleRedirectPromise();
+        if (cancelled || !result?.account) return;
+        const profile = buildProfileFromAccount(result.account);
+        const domain = profile.email.split('@')[1];
+        if (domain !== 'diroma.com.br') {
+          setUser(null);
+          await instance.logoutRedirect({ postLogoutRedirectUri: window.location.origin }).catch(() => undefined);
+          return;
+        }
+        setUser(profile);
+        localStorage.removeItem('onboarding_diroma_session');
+      } catch (err) {
+        console.warn('MSAL redirect:', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [instance]);
 
   useEffect(() => {
     if (accounts.length > 0) {
@@ -93,7 +117,7 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
 
   // Alinha papel/nome com o backend (users.me) quando a API estiver no ar
   useEffect(() => {
-    if (!user?.isAuthenticated || !user.email) return;
+    if (!user?.isAuthenticated || !user.email || user.isDemo) return;
     let cancelled = false;
     (async () => {
       try {
@@ -128,49 +152,56 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sync once per session email
-  }, [user?.isAuthenticated, user?.email]);
+  }, [user?.isAuthenticated, user?.email, user?.isDemo]);
 
   const getAccessToken = async () => {
-    if (!msalSettings.configured) return null;
+    if (isPlaceholderClientId(msalSettings.clientId) || user?.isDemo) return null;
     return acquireApiAccessToken(accounts[0] || null);
   };
 
   const loginWithMicrosoft = async () => {
-    // Sem Client ID real: autentica como admin diRoma (único caminho de acesso na UI)
-    if (!msalSettings.configured || msalSettings.clientId === '00000000-0000-0000-0000-000000000000') {
-      setUser(ADMIN_BOOTSTRAP);
-      localStorage.setItem('onboarding_diroma_session', JSON.stringify(ADMIN_BOOTSTRAP));
+    const demoOk = isDemoLoginEnabled();
+    const missingEntra = isPlaceholderClientId(msalSettings.clientId) || !msalSettings.configured;
+
+    // Bypass local SOMENTE se VITE_ENABLE_DEMO_LOGIN=true (dev)
+    if (missingEntra && demoOk) {
+      setUser({ ...ADMIN_BOOTSTRAP, isDemo: true });
+      localStorage.setItem('onboarding_diroma_session', JSON.stringify({ ...ADMIN_BOOTSTRAP, isDemo: true }));
       return;
     }
 
+    if (missingEntra) {
+      throw new Error(
+        'Entra ID não configurado neste build. No servidor, defina VITE_AZURE_CLIENT_ID / TENANT_ID no .env e reconstrua o front: sudo docker compose up -d --build web'
+      );
+    }
+
+    if (inProgress !== InteractionStatus.None) {
+      throw new Error('Autenticação Microsoft já em andamento. Aguarde.');
+    }
+
     try {
-      const response = await instance.loginPopup(loginRequest);
-      if (response?.account) {
-        const profile = buildProfileFromAccount(response.account);
-        const domain = profile.email.split('@')[1];
-        if (domain !== 'diroma.com.br') {
-          await instance.logoutPopup({ postLogoutRedirectUri: window.location.origin }).catch(() => undefined);
-          setUser(null);
-          throw new Error('Acesso restrito a contas @diroma.com.br');
-        }
-        setUser(profile);
-        localStorage.removeItem('onboarding_diroma_session');
-      }
+      // Redirect é mais confiável atrás do NPM (popup costuma ser bloqueado)
+      await instance.loginRedirect(loginRequest);
     } catch (err: unknown) {
       console.warn('MSAL Login falhou:', err);
       throw err;
     }
   };
 
-  // Restaura sessão bootstrap (dev / pré-Entra)
+  // Restaura sessão bootstrap apenas em modo demo
   useEffect(() => {
+    if (!isDemoLoginEnabled()) {
+      localStorage.removeItem('onboarding_diroma_session');
+      return;
+    }
     if (accounts.length > 0 || user) return;
     const saved = localStorage.getItem('onboarding_diroma_session');
     if (saved) {
       try {
         const parsed = JSON.parse(saved) as UserProfile;
         if (parsed?.email && resolveUserRole(parsed.email) === 'admin') {
-          setUser({ ...parsed, role: 'admin', isAuthenticated: true });
+          setUser({ ...parsed, role: 'admin', isAuthenticated: true, isDemo: true });
         }
       } catch {
         localStorage.removeItem('onboarding_diroma_session');
@@ -179,14 +210,15 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
   }, [accounts.length, user]);
 
   const logout = () => {
-    if (user && msalSettings.configured && accounts.length > 0) {
-      instance
-        .logoutPopup({ postLogoutRedirectUri: window.location.origin })
-        .catch((err) => console.warn('Logout error:', err));
-    }
-    setUser(null);
     localStorage.removeItem('onboarding_diroma_session');
     localStorage.removeItem('onboarding_demo_user');
+    setUser(null);
+    if (msalSettings.configured && accounts.length > 0) {
+      instance
+        .logoutRedirect({ postLogoutRedirectUri: window.location.origin })
+        .catch((err) => console.warn('Logout error:', err));
+      return;
+    }
   };
 
   const updateMsalSettings = (newSettings: MsalConfigState) => {
