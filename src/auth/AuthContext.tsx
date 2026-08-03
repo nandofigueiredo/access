@@ -114,15 +114,16 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
     let cancelled = false;
     (async () => {
       try {
-        // Só após pca.initialize() (feito no AuthProvider)
-        const result = await instance.handleRedirectPromise();
+        // initialize() é idempotente — garante estado pronto mesmo se o Provider recriar o wrapper
+        await msalInstance.initialize();
+        const result = await msalInstance.handleRedirectPromise();
         if (cancelled) return;
         if (result?.account) {
           const profile = buildProfileFromAccount(result.account);
           const domain = profile.email.split('@')[1];
           if (domain !== 'diroma.com.br') {
             setUser(null);
-            await instance
+            await msalInstance
               .logoutRedirect({ postLogoutRedirectUri: window.location.origin })
               .catch(() => undefined);
             return;
@@ -137,7 +138,7 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [instance]);
+  }, [msalInstance]);
 
   useEffect(() => {
     if (accounts.length > 0) {
@@ -217,7 +218,8 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
     }
 
     try {
-      await instance.loginRedirect(loginRequest);
+      await msalInstance.initialize();
+      await msalInstance.loginRedirect(loginRequest);
     } catch (err: unknown) {
       console.warn('MSAL Login falhou:', err);
       throw err;
