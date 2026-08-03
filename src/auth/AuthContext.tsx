@@ -14,6 +14,7 @@ import {
   saveMsalSettings,
 } from './msalConfig';
 import { bootMsal, getBootedMsal, loginRequest, MSAL_BOOT_ERROR_KEY } from './msalBoot';
+import { authDebugLog } from './authDebug';
 import { acquireApiAccessToken, setAccessTokenProvider, setMsalInstance, api } from '../api/client';
 import { AccessRole, DEMO_USERS } from './roles';
 
@@ -261,11 +262,16 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
     try {
       setAuthError(null);
       sessionStorage.removeItem(MSAL_BOOT_ERROR_KEY);
+      authDebugLog('loginRedirect starting', {
+        scopes: loginRequest.scopes,
+        responseMode: (loginRequest as { responseMode?: string }).responseMode,
+      });
       // URL limpa antes do redirect (evita reprocessar code antigo)
       window.history.replaceState({}, document.title, window.location.origin + window.location.pathname);
       await msalInstance.initialize();
       await msalInstance.loginRedirect(loginRequest);
     } catch (err: unknown) {
+      authDebugLog('loginRedirect failed', err instanceof Error ? err.message : String(err));
       console.warn('MSAL Login falhou:', err);
       throw err;
     }

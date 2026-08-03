@@ -6,6 +6,7 @@ import {
   clearMsalInteractionLocks,
   loginRequest as baseLoginRequest,
 } from './msalConfig';
+import { authDebugLog, isAuthDebugEnabled, collectAuthDebugSnapshot } from './authDebug';
 
 export const MSAL_BOOT_ERROR_KEY = 'msal_boot_error';
 
@@ -23,7 +24,9 @@ function readEntraErrorFromUrl(): string | null {
   try {
     const hash = window.location.hash?.replace(/^#/, '') || '';
     const search = window.location.search?.replace(/^\?/, '') || '';
-    const params = new URLSearchParams(hash.includes('error=') ? hash : search.includes('error=') ? search : hash || search);
+    const params = new URLSearchParams(
+      hash.includes('error=') ? hash : search.includes('error=') ? search : hash || search
+    );
     const err = params.get('error');
     const desc = params.get('error_description');
     if (!err && !desc) return null;
@@ -44,6 +47,9 @@ function clearOAuthParamsFromUrl(): void {
     window.location.search.includes('error=') ||
     window.location.search.includes('client_info=');
   if (!hasHashAuth && !hasQueryAuth) return;
+  authDebugLog('clearOAuthParamsFromUrl', {
+    before: window.location.href.slice(0, 180),
+  });
   window.history.replaceState({}, document.title, `${window.location.origin}${window.location.pathname}`);
 }
 
@@ -52,15 +58,31 @@ function clearOAuthParamsFromUrl(): void {
  * Processa ?code= / #code= uma vez só (sem corrida do Strict Mode).
  */
 export function bootMsal(): Promise<PublicClientApplication | null> {
-  if (bootedInstance) return Promise.resolve(bootedInstance);
-  if (bootPromise) return bootPromise;
+  if (bootedInstance) {
+    authDebugLog('bootMsal: reuse instance');
+    return Promise.resolve(bootedInstance);
+  }
+  if (bootPromise) {
+    authDebugLog('bootMsal: await in-flight');
+    return bootPromise;
+  }
 
   bootPromise = (async () => {
     if (typeof window === 'undefined') return null;
-    if (!isSecureAuthContext()) return null;
+    authDebugLog('bootMsal: start', {
+      debug: isAuthDebugEnabled(),
+      href: window.location.href.slice(0, 240),
+      secure: isSecureAuthContext(),
+    });
+
+    if (!isSecureAuthContext()) {
+      authDebugLog('bootMsal: abort insecure context');
+      return null;
+    }
 
     const entraErr = readEntraErrorFromUrl();
     if (entraErr) {
+      authDebugLog('bootMsal: Entra error in URL', entraErr.slice(0, 300));
       try {
         sessionStorage.setItem(MSAL_BOOT_ERROR_KEY, entraErr);
       } catch {
@@ -69,25 +91,45 @@ export function bootMsal(): Promise<PublicClientApplication | null> {
       clearOAuthParamsFromUrl();
     }
 
-    // NÃO limpar locks se ainda há code= na URL — pode atrapalhar o exchange
     const hasAuthCode =
       window.location.hash.includes('code=') || window.location.search.includes('code=');
+    authDebugLog('bootMsal: hasAuthCode', { hasAuthCode, hash: !!window.location.hash, search: window.location.search });
+
     if (!hasAuthCode) {
       clearMsalInteractionLocks();
+      authDebugLog('bootMsal: cleared interaction locks');
     }
 
-    const pca = createMsalInstance(getStoredMsalSettings());
+    const settings = getStoredMsalSettings();
+    authDebugLog('bootMsal: settings', {
+      clientId: settings.clientId,
+      tenantId: settings.tenantId,
+      redirectUri: settings.redirectUri,
+      configured: settings.configured,
+    });
+
+    const pca = createMsalInstance(settings);
     await pca.initialize();
+    authDebugLog('bootMsal: initialized');
 
     try {
       const result = await pca.handleRedirectPromise({
         navigateToLoginRequestUrl: false,
+      });
+      authDebugLog('bootMsal: handleRedirectPromise result', {
+        hasResult: !!result,
+        account: result?.account?.username || null,
+        expiresOn: result?.expiresOn?.toISOString?.() || null,
+        scopes: result?.scopes || null,
       });
       if (result?.account) {
         pca.setActiveAccount(result.account);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const name = err instanceof Error ? err.name : 'Error';
+      const stack = err instanceof Error ? err.stack?.slice(0, 500) : undefined;
+      authDebugLog('bootMsal: handleRedirectPromise FAILED', { name, message, stack });
       console.warn('MSAL handleRedirectPromise:', err);
       try {
         sessionStorage.setItem(
@@ -106,9 +148,25 @@ export function bootMsal(): Promise<PublicClientApplication | null> {
       pca.setActiveAccount(accounts[0]);
     }
 
+    authDebugLog('bootMsal: done', {
+      accounts: accounts.length,
+      active: pca.getActiveAccount()?.username || null,
+      snapshot: collectAuthDebugSnapshot({
+        accounts: accounts.length,
+        activeAccount: pca.getActiveAccount()?.username || null,
+        clientId: settings.clientId,
+        tenantId: settings.tenantId,
+        redirectUri:
+          typeof window !== 'undefined' && window.location.hostname !== 'localhost'
+            ? window.location.origin
+            : settings.redirectUri,
+      }),
+    });
+
     bootedInstance = pca;
     return pca;
   })().catch((err) => {
+    authDebugLog('bootMsal: fatal', err instanceof Error ? err.message : String(err));
     bootPromise = null;
     throw err;
   });

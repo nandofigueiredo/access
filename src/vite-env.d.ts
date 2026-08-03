@@ -7,6 +7,7 @@ interface ImportMetaEnv {
   readonly VITE_AZURE_REDIRECT_URI: string;
   readonly VITE_AZURE_API_SCOPE: string;
   readonly VITE_ENABLE_DEMO_LOGIN: string;
+  readonly VITE_AUTH_DEBUG: string;
 }
 
 interface ImportMeta {

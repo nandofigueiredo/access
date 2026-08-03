@@ -1,6 +1,7 @@
 import { Configuration, LogLevel, PublicClientApplication } from '@azure/msal-browser';
 import { MsalConfigState } from '../types';
 import { msalConfig as envMsalConfig, loginRequest as envLoginRequest } from './authConfig';
+import { authDebugLog, isAuthDebugEnabled } from './authDebug';
 
 const STORAGE_KEY = 'msal_config_settings_ti';
 const PLACEHOLDER_CLIENT = '00000000-0000-0000-0000-000000000000';
@@ -112,6 +113,9 @@ export const createMsalInstance = (settings: MsalConfigState = getStoredMsalSett
       ? window.location.origin
       : settings.redirectUri || window.location.origin;
 
+  const debug = isAuthDebugEnabled();
+  authDebugLog('createMsalInstance', { clientId, redirectUri, tenantId: settings.tenantId, debug });
+
   const msalConfig: Configuration = {
     auth: {
       clientId,
@@ -122,7 +126,9 @@ export const createMsalInstance = (settings: MsalConfigState = getStoredMsalSett
       onRedirectNavigate: (url) => {
         try {
           const target = new URL(url, window.location.origin);
-          if (target.origin === window.location.origin) return false;
+          const sameOrigin = target.origin === window.location.origin;
+          authDebugLog('onRedirectNavigate', { url: url.slice(0, 160), sameOrigin, allow: !sameOrigin });
+          if (sameOrigin) return false;
         } catch {
           // allow
         }
@@ -137,10 +143,14 @@ export const createMsalInstance = (settings: MsalConfigState = getStoredMsalSett
       loggerOptions: {
         loggerCallback: (level, message, containsPii) => {
           if (containsPii) return;
+          if (debug) {
+            authDebugLog(`MSAL[${LogLevel[level] || level}]`, message);
+            return;
+          }
           if (level === LogLevel.Error) console.error('[MSAL]', message);
           if (level === LogLevel.Warning) console.warn('[MSAL]', message);
         },
-        logLevel: LogLevel.Warning,
+        logLevel: debug ? LogLevel.Verbose : LogLevel.Warning,
       },
     },
   };
