@@ -48,8 +48,8 @@ export function lookupCatalogRole(email: string): AccessRole | null {
 }
 
 /**
- * Admin (N3) — somente e-mails explicitamente listados / prefixo n3.
- * Prioridade: cadastro em Usuários & Perfis → heurística de e-mail.
+ * Admin (N3) — e-mails explicitamente listados / prefixo n3. nunca perdem admin.
+ * Depois: cadastro em Usuários & Perfis → heurística de e-mail.
  */
 export const ADMIN_EMAILS = new Set([
   'luis.figueiredo@diroma.com.br',
@@ -58,14 +58,18 @@ export const ADMIN_EMAILS = new Set([
 
 export function resolveUserRole(email: string): AccessRole {
   const normalized = email.trim().toLowerCase();
-  const fromCatalog = lookupCatalogRole(normalized);
-  if (fromCatalog) return fromCatalog;
-
   const local = normalized.split('@')[0] || '';
 
+  // 1) Admin fixo — NÃO pode ser sobrescrito pelo catálogo
   if (ADMIN_EMAILS.has(normalized) || local.startsWith('n3.') || local.startsWith('admin.n3')) {
     return 'admin';
   }
+
+  // 2) Papel cadastrado em Administração → Usuários & Perfis
+  const fromCatalog = lookupCatalogRole(normalized);
+  if (fromCatalog) return fromCatalog;
+
+  // 3) Heurística por prefixo do e-mail
   if (local.startsWith('rh.') || local.includes('.rh')) return 'rh';
   if (local.startsWith('gestor.') || local.startsWith('manager.')) return 'gestor';
   if (local.startsWith('ti.') || local.startsWith('sd.') || local.startsWith('servicedesk.')) {
@@ -160,7 +164,9 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
         if (cancelled || !me?.email) return;
         setUser((prev) => {
           if (!prev) return prev;
-          const nextRole = (me.role as AccessRole) || prev.role;
+          // Admin fixo nunca é rebaixado pelo /users/me
+          const apiRole = (me.role as AccessRole) || prev.role;
+          const nextRole = ADMIN_EMAILS.has(prev.email.toLowerCase()) ? 'admin' : apiRole;
           if (
             prev.name === (me.name || prev.name) &&
             prev.role === nextRole &&

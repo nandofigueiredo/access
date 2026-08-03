@@ -71,13 +71,17 @@ export function isSecureAuthContext(): boolean {
   return host === 'localhost' || host === '127.0.0.1';
 }
 
-/** Limpa flag de interação MSAL presa (causa interaction_in_progress + popup fantasma). */
+/** Limpa só o lock de interação MSAL (NÃO apaga request.params / PKCE). */
 export function clearMsalInteractionLocks(): void {
   if (typeof sessionStorage === 'undefined') return;
   const keys: string[] = [];
   for (let i = 0; i < sessionStorage.length; i += 1) {
     const k = sessionStorage.key(i);
-    if (k && (k.includes('interaction') || k.includes('request.params'))) keys.push(k);
+    if (!k) continue;
+    const lower = k.toLowerCase();
+    if (lower.includes('interaction.status') || lower.endsWith('interaction.status')) {
+      keys.push(k);
+    }
   }
   keys.forEach((k) => sessionStorage.removeItem(k));
 }
