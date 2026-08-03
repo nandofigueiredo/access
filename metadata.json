@@ -1,0 +1,6 @@
+{
+  "name": "Onboarding e Offboarding TI",
+  "description": "Sistema de Gestão de Onboarding e Offboarding de TI integrado ao Microsoft Entra ID (MSAL) e conformidade LGPD",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
