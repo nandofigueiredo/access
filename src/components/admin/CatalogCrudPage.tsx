@@ -8,7 +8,7 @@ interface CatalogCrudPageProps {
   title: string;
   subtitle: string;
   items: CatalogItem[];
-  onSave: (item: CatalogItem) => void;
+  onSave: (item: CatalogItem) => void | Promise<void>;
   onDelete: (id: string) => void;
   addToast: (toast: Omit<ToastMessage, 'id'>) => void;
   showDescription?: boolean;
@@ -87,7 +87,7 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
     setActive(item.active);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
       addToast({ type: 'error', title: 'Nome obrigatório', message: 'Informe o nome do item.' });
@@ -143,13 +143,21 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
           role,
         },
       };
-      onSave(payload);
-      addToast({
-        type: 'success',
-        title: editing ? 'Usuário atualizado' : 'Usuário cadastrado',
-        message: `"${payload.name}" · ${normalizedEmail} · perfil ${roleLabel(role)}.`,
-      });
-      openCreate();
+      try {
+        await onSave(payload);
+        addToast({
+          type: 'success',
+          title: editing ? 'Usuário atualizado' : 'Usuário cadastrado',
+          message: `"${payload.name}" · ${normalizedEmail} · perfil ${roleLabel(role)} gravado no banco.`,
+        });
+        openCreate();
+      } catch (err) {
+        addToast({
+          type: 'error',
+          title: 'Falha ao salvar',
+          message: err instanceof Error ? err.message : 'Não foi possível gravar no banco.',
+        });
+      }
       return;
     }
 
@@ -161,13 +169,21 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
       sortOrder: editing?.sortOrder ?? items.length + 1,
       meta: editing?.meta,
     };
-    onSave(payload);
-    addToast({
-      type: 'success',
-      title: editing ? 'Item atualizado' : 'Item cadastrado',
-      message: `"${payload.name}" salvo com sucesso.`,
-    });
-    openCreate();
+    try {
+      await onSave(payload);
+      addToast({
+        type: 'success',
+        title: editing ? 'Item atualizado' : 'Item cadastrado',
+        message: `"${payload.name}" salvo com sucesso.`,
+      });
+      openCreate();
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Falha ao salvar',
+        message: err instanceof Error ? err.message : 'Não foi possível gravar.',
+      });
+    }
   };
 
   const toggleActive = (item: CatalogItem) => {

@@ -56,45 +56,45 @@ function userIdentityKey(u: CatalogItem): string {
   return `id:${u.id}`;
 }
 
-function richerUser(a: CatalogItem, b: CatalogItem): CatalogItem {
-  const aMail = typeof a.meta?.email === 'string' ? a.meta.email : '';
-  const bMail = typeof b.meta?.email === 'string' ? b.meta.email : '';
-  const aRole = typeof a.meta?.role === 'string' ? a.meta.role : '';
-  const bRole = typeof b.meta?.role === 'string' ? b.meta.role : '';
-  const pick = bMail.includes('@') && !aMail.includes('@') ? b : aMail.includes('@') ? a : b;
-  const other = pick === a ? b : a;
-  const email =
-    (typeof pick.meta?.email === 'string' && pick.meta.email.includes('@')
-      ? pick.meta.email
-      : typeof other.meta?.email === 'string' && other.meta.email.includes('@')
-        ? other.meta.email
-        : pick.name.includes('@')
-          ? pick.name.trim().toLowerCase()
-          : other.name.includes('@')
-            ? other.name.trim().toLowerCase()
-            : '') || undefined;
+function richerUser(existing: CatalogItem, incoming: CatalogItem): CatalogItem {
+  /** Incoming vence em role/e-mail; completa buracos com o existente. */
+  const aMeta = (existing.meta || {}) as Record<string, string | boolean | number | null>;
+  const bMeta = (incoming.meta || {}) as Record<string, string | boolean | number | null>;
+
+  const mailOf = (meta: Record<string, string | boolean | number | null>, row: CatalogItem) => {
+    const m = typeof meta.email === 'string' ? meta.email.trim().toLowerCase() : '';
+    if (m.includes('@')) return m;
+    const n = (row.name || '').trim().toLowerCase();
+    return n.includes('@') ? n : '';
+  };
+
+  const email = mailOf(bMeta, incoming) || mailOf(aMeta, existing);
   const role =
-    (typeof pick.meta?.role === 'string' && pick.meta.role) ||
-    (typeof other.meta?.role === 'string' && other.meta.role) ||
+    (typeof bMeta.role === 'string' && bMeta.role) ||
+    (typeof aMeta.role === 'string' && aMeta.role) ||
     undefined;
+
+  const nameIn = incoming.name || '';
+  const nameEx = existing.name || '';
   const name =
-    pick.name.includes('@') && other.name && !other.name.includes('@')
-      ? other.name
-      : other.name.includes('@') && pick.name && !pick.name.includes('@')
-        ? pick.name
-        : pick.name || other.name;
+    nameIn.includes('@') && nameEx && !nameEx.includes('@')
+      ? nameEx
+      : nameIn || nameEx;
+
   return {
-    ...other,
-    ...pick,
+    ...existing,
+    ...incoming,
+    id: incoming.id || existing.id,
     name,
-    active: pick.active !== false && other.active !== false,
+    active: incoming.active !== false,
+    description: incoming.description || existing.description,
+    sortOrder: incoming.sortOrder ?? existing.sortOrder,
     meta: {
-      ...(other.meta || {}),
-      ...(pick.meta || {}),
-      ...(email ? { email: email.trim().toLowerCase() } : {}),
+      ...aMeta,
+      ...bMeta,
+      ...(email ? { email } : {}),
       ...(role ? { role } : {}),
     },
-    description: pick.description || other.description || (role === 'admin' ? 'Admin N3' : undefined),
   };
 }
 
@@ -187,7 +187,7 @@ interface CatalogContextValue {
   syncing: boolean;
   activeOptions: (key: Exclude<CatalogKey, 'formFields'>) => CatalogItem[];
   visibleFields: (form: 'onboarding' | 'offboarding') => FormFieldConfig[];
-  upsertItem: (key: Exclude<CatalogKey, 'formFields'>, item: CatalogItem) => void;
+  upsertItem: (key: Exclude<CatalogKey, 'formFields'>, item: CatalogItem) => void | Promise<void>;
   removeItem: (key: Exclude<CatalogKey, 'formFields'>, id: string) => void;
   upsertFormField: (field: FormFieldConfig) => void;
   removeFormField: (id: string) => void;
@@ -340,15 +340,29 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
   );
 
   const upsertItem = useCallback(
-    (key: Exclude<CatalogKey, 'formFields'>, item: CatalogItem) => {
+    async (key: Exclude<CatalogKey, 'formFields'>, item: CatalogItem) => {
       const list = [...catalog[key]];
       const idx = list.findIndex((i) => i.id === item.id);
       if (idx >= 0) list[idx] = item;
       else list.push(item);
-      // Usuários: grava no banco na hora (sem debounce) para não sumir no poll
-      persist({ ...catalog, [key]: list }, { immediate: key === 'users' });
+      const next = { ...catalog, [key]: list };
+      const withTs = normalizeCatalog({ ...next, updatedAt: new Date().toISOString() });
+      setCatalog(withTs);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(withTs));
+      notifyCatalogUpdated();
+      if (key === 'users') {
+        const ok = await pushRemote(withTs);
+        if (!ok) {
+          throw new Error('Não foi possível gravar no banco. Tente novamente.');
+        }
+        return;
+      }
+      if (saveTimer.current) window.clearTimeout(saveTimer.current);
+      saveTimer.current = window.setTimeout(() => {
+        void pushRemote(withTs);
+      }, 400);
     },
-    [catalog, persist]
+    [catalog, pushRemote]
   );
 
   const removeItem = useCallback(

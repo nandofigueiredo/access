@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.auth import get_current_user
 from app.database import get_db
@@ -29,42 +31,46 @@ def _user_key(user: dict[str, Any]) -> str:
     return f"id:{user.get('id')}"
 
 
-def _richer_user(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
-    a_meta = a.get("meta") if isinstance(a.get("meta"), dict) else {}
-    b_meta = b.get("meta") if isinstance(b.get("meta"), dict) else {}
-    a_mail = str(a_meta.get("email") or "")
-    b_mail = str(b_meta.get("email") or "")
-    pick, other = (b, a) if ("@" in b_mail and "@" not in a_mail) else (a, b)
-    pick_meta = pick.get("meta") if isinstance(pick.get("meta"), dict) else {}
-    other_meta = other.get("meta") if isinstance(other.get("meta"), dict) else {}
-    email = (
-        str(pick_meta.get("email") or "")
-        if "@" in str(pick_meta.get("email") or "")
-        else str(other_meta.get("email") or "")
-        if "@" in str(other_meta.get("email") or "")
-        else str(pick.get("name") or "").lower()
-        if "@" in str(pick.get("name") or "")
-        else str(other.get("name") or "").lower()
-        if "@" in str(other.get("name") or "")
-        else ""
-    )
-    role = str(pick_meta.get("role") or other_meta.get("role") or "") or None
-    name_pick = str(pick.get("name") or "")
-    name_other = str(other.get("name") or "")
-    name = (
-        name_other
-        if "@" in name_pick and name_other and "@" not in name_other
-        else name_pick
-        if "@" in name_other and name_pick and "@" not in name_pick
-        else name_pick or name_other
-    )
-    merged_meta = {**other_meta, **pick_meta}
-    if email and "@" in email:
-        merged_meta["email"] = email.strip().lower()
+def _richer_user(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    """Incoming vence em role/e-mail/status; completa o que faltar com o existente."""
+    a_meta = existing.get("meta") if isinstance(existing.get("meta"), dict) else {}
+    b_meta = incoming.get("meta") if isinstance(incoming.get("meta"), dict) else {}
+
+    def _mail(meta: dict[str, Any], row: dict[str, Any]) -> str:
+        m = str(meta.get("email") or "").strip().lower()
+        if "@" in m:
+            return m
+        n = str(row.get("name") or "").strip().lower()
+        return n if "@" in n else ""
+
+    email = _mail(b_meta, incoming) or _mail(a_meta, existing)
+    role = str(b_meta.get("role") or a_meta.get("role") or "").strip() or None
+
+    name_in = str(incoming.get("name") or "")
+    name_ex = str(existing.get("name") or "")
+    if "@" in name_in and name_ex and "@" not in name_ex:
+        name = name_ex
+    elif name_in:
+        name = name_in
+    else:
+        name = name_ex
+
+    meta = {**a_meta, **b_meta}
+    if email:
+        meta["email"] = email
     if role:
-        merged_meta["role"] = role
-    out = {**other, **pick, "name": name, "meta": merged_meta}
-    out["active"] = bool(pick.get("active", True)) and bool(other.get("active", True))
+        meta["role"] = role
+
+    out = {
+        **existing,
+        **incoming,
+        "id": incoming.get("id") or existing.get("id"),
+        "name": name,
+        "meta": meta,
+        "description": incoming.get("description") or existing.get("description"),
+        "active": bool(incoming.get("active", existing.get("active", True))),
+        "sortOrder": incoming.get("sortOrder", existing.get("sortOrder", 0)),
+    }
     return out
 
 
@@ -78,13 +84,15 @@ def _merge_catalog_users(
     for raw in server_users:
         if not isinstance(raw, dict):
             continue
-        merged[_user_key(raw)] = raw
+        # Cópia rasa para não mutar JSONB ligado à sessão async
+        merged[_user_key(raw)] = copy.deepcopy(raw)
     for raw in incoming_users:
         if not isinstance(raw, dict):
             continue
         key = _user_key(raw)
+        incoming = copy.deepcopy(raw)
         existing = merged.get(key)
-        merged[key] = _richer_user(existing, raw) if existing else raw
+        merged[key] = _richer_user(existing, incoming) if existing else incoming
 
     if delete_ids:
         merged = {
@@ -109,7 +117,8 @@ async def get_setting(
     row = result.scalar_one_or_none()
     if not row:
         return SettingsOut(key=key, value={}, updatedAt=None)
-    return SettingsOut(key=row.key, value=row.value or {}, updatedAt=row.updated_at)
+    # Cópia: evita greenlet ao serializar JSONB da sessão
+    return SettingsOut(key=row.key, value=copy.deepcopy(row.value or {}), updatedAt=row.updated_at)
 
 
 @router.put("/{key}", response_model=SettingsOut)
@@ -130,11 +139,11 @@ async def put_setting(
     result = await db.execute(select(AppSetting).where(AppSetting.key == key))
     row = result.scalar_one_or_none()
 
-    value: dict[str, Any] = dict(payload.value) if isinstance(payload.value, dict) else {}
+    value: dict[str, Any] = copy.deepcopy(payload.value) if isinstance(payload.value, dict) else {}
 
     # Catálogo: une usuários com o banco (não apaga por race/stale client)
     if key == "catalog":
-        server_val = row.value if row and isinstance(row.value, dict) else {}
+        server_val = copy.deepcopy(row.value) if row and isinstance(row.value, dict) else {}
         server_users = server_val.get("users") if isinstance(server_val.get("users"), list) else []
         incoming_users = value.get("users") if isinstance(value.get("users"), list) else []
         raw_deletes = value.pop("userDeleteIds", None)
@@ -144,12 +153,14 @@ async def put_setting(
         remote_ts = str(server_val.get("updatedAt") or "")
         incoming_ts = str(value.get("updatedAt") or "")
         if remote_ts and incoming_ts and incoming_ts < remote_ts and not delete_ids:
-            # Cliente antigo: mantém restante do servidor, só enriquecer users (já mergeados)
-            value = {**server_val, **value, "users": value["users"], "updatedAt": remote_ts}
+            # Cliente antigo: preserva campos do servidor e users já mergeados
+            merged_users = value["users"]
+            value = {**server_val, **value, "users": merged_users, "updatedAt": remote_ts}
 
     if row:
         row.value = value
         row.updated_by = current_user.id
+        flag_modified(row, "value")
     else:
         row = AppSetting(key=key, value=value, updated_by=current_user.id)
         db.add(row)
@@ -161,4 +172,5 @@ async def put_setting(
         performed_by_user_id=current_user.id,
         details={"key": key},
     )
-    return SettingsOut(key=row.key, value=row.value or {}, updatedAt=row.updated_at)
+    await db.refresh(row)
+    return SettingsOut(key=row.key, value=copy.deepcopy(row.value or {}), updatedAt=row.updated_at)
