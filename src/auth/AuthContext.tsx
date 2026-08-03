@@ -15,7 +15,7 @@ import {
 } from './msalConfig';
 import { bootMsal, getBootedMsal, loginRequest, MSAL_BOOT_ERROR_KEY } from './msalBoot';
 import { authDebugLog } from './authDebug';
-import { acquireApiAccessToken, setAccessTokenProvider, setMsalInstance, api } from '../api/client';
+import { acquireApiAccessToken, setAccessTokenProvider, setMsalInstance, api, USE_API } from '../api/client';
 import { AccessRole, DEMO_USERS, roleLabel } from './roles';
 
 const CATALOG_STORAGE_KEY = 'portal_ti_system_catalog_v1';
@@ -40,18 +40,40 @@ function readCatalogUsers(): CatalogUserRow[] {
   }
 }
 
-/** Usuário em Administração → Usuários & Perfis (e-mail em meta ou nome=e-mail legado). */
-export function lookupCatalogUser(email: string): CatalogUserRow | null {
+/**
+ * Bootstrap admin (só estes e-mails entram sem linha no catálogo).
+ * Qualquer outra conta @diroma.com.br PRECISA estar em Usuários & Perfis.
+ */
+export const ADMIN_EMAILS = new Set([
+  'luis.figueiredo@diroma.com.br',
+  'n3.admin@diroma.com.br',
+]);
+
+export function isFixedAdmin(email: string): boolean {
+  return ADMIN_EMAILS.has(email.trim().toLowerCase());
+}
+
+function matchCatalogUser(email: string, users: CatalogUserRow[]): CatalogUserRow | null {
   const normalized = email.trim().toLowerCase();
   if (!normalized) return null;
   return (
-    readCatalogUsers().find((u) => {
+    users.find((u) => {
       if (u.active === false) return false;
       const mail = String(u.meta?.email || '').trim().toLowerCase();
       const name = String(u.name || '').trim().toLowerCase();
       return mail === normalized || name === normalized;
     }) || null
   );
+}
+
+/** Pode entrar: admin bootstrap OU cadastrado/ativo em Usuários & Perfis. */
+export function isPortalUserAllowed(email: string): boolean {
+  if (isFixedAdmin(email)) return true;
+  return matchCatalogUser(email, readCatalogUsers()) !== null;
+}
+
+export function lookupCatalogUser(email: string): CatalogUserRow | null {
+  return matchCatalogUser(email, readCatalogUsers());
 }
 
 /** Papel cadastrado em Administração → Usuários & Perfis. */
@@ -63,37 +85,99 @@ export function lookupCatalogRole(email: string): AccessRole | null {
   return null;
 }
 
-/**
- * Admin (N3) fixo nunca perde admin.
- * Demais operadores: papel do cadastro em Usuários & Perfis (obrigatório).
- */
-export const ADMIN_EMAILS = new Set([
-  'luis.figueiredo@diroma.com.br',
-  'n3.admin@diroma.com.br',
-]);
-
-export function isFixedAdmin(email: string): boolean {
-  const normalized = email.trim().toLowerCase();
-  const local = normalized.split('@')[0] || '';
-  return ADMIN_EMAILS.has(normalized) || local.startsWith('n3.') || local.startsWith('admin.n3');
-}
-
-/** Pode entrar: admin fixo OU cadastrado/ativo em Usuários & Perfis. */
-export function isPortalUserAllowed(email: string): boolean {
-  if (isFixedAdmin(email)) return true;
-  return lookupCatalogUser(email) !== null;
-}
-
 export function resolveUserRole(email: string): AccessRole {
   const normalized = email.trim().toLowerCase();
   if (isFixedAdmin(normalized)) return 'admin';
   const fromCatalog = lookupCatalogRole(normalized);
   if (fromCatalog) return fromCatalog;
+  // Sem cadastro: nunca eleva — viewer só como fallback defensivo (acesso deve ser bloqueado antes)
   return 'viewer';
+}
+
+function extractAccountEmail(account: AccountInfo): string {
+  const claims = (account.idTokenClaims || {}) as Record<string, unknown>;
+  return (
+    account.username ||
+    (typeof claims.preferred_username === 'string' ? claims.preferred_username : '') ||
+    (typeof claims.email === 'string' ? claims.email : '')
+  ).toLowerCase();
+}
+
+/** Atualiza catálogo local a partir da API (fonte de verdade dos operadores). */
+async function syncCatalogUsersFromApi(): Promise<CatalogUserRow[]> {
+  if (!USE_API) return readCatalogUsers();
+  try {
+    const remote = await api.getSetting<{ users?: CatalogUserRow[] }>('catalog');
+    const users = remote?.value?.users;
+    if (!Array.isArray(users)) return readCatalogUsers();
+    try {
+      const raw = localStorage.getItem(CATALOG_STORAGE_KEY);
+      const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      const next = {
+        ...parsed,
+        users,
+        updatedAt: new Date().toISOString(),
+      };
+      localStorage.setItem(CATALOG_STORAGE_KEY, JSON.stringify(next));
+      window.dispatchEvent(new Event(CATALOG_UPDATED_EVENT));
+    } catch {
+      // ignore storage
+    }
+    return users;
+  } catch (err) {
+    console.warn('Falha ao sincronizar Usuários & Perfis da API:', err);
+    return readCatalogUsers();
+  }
+}
+
+async function verifyPortalAccess(email: string): Promise<{ allowed: boolean; reason?: string; role?: AccessRole }> {
+  if (isFixedAdmin(email)) {
+    return { allowed: true, role: 'admin' };
+  }
+
+  // 1) API dedicada (catálogo no banco)
+  if (USE_API) {
+    try {
+      const status = await api.getAccessStatus(email);
+      if (status.allowed) {
+        const role =
+          status.role === 'admin' ||
+          status.role === 'ti' ||
+          status.role === 'rh' ||
+          status.role === 'gestor' ||
+          status.role === 'viewer'
+            ? status.role
+            : lookupCatalogRole(email) || 'viewer';
+        return { allowed: true, role };
+      }
+      return {
+        allowed: false,
+        reason:
+          status.reason ||
+          `"${email}" não está cadastrado em Administração → Usuários & Perfis.`,
+      };
+    } catch (err) {
+      console.warn('access/status falhou, tentando catálogo:', err);
+    }
+  }
+
+  // 2) Fallback: lista de usuários do settings/catalog
+  const users = await syncCatalogUsersFromApi();
+  const row = matchCatalogUser(email, users);
+  if (!row) {
+    return {
+      allowed: false,
+      reason: `"${email}" não está cadastrado em Administração → Usuários & Perfis. Peça a um Admin N3 para liberar o acesso.`,
+    };
+  }
+  const role = lookupCatalogRole(email) || 'viewer';
+  return { allowed: true, role };
 }
 
 interface AuthContextType {
   user: UserProfile | null;
+  /** true enquanto valida cadastro em Usuários & Perfis após login Microsoft */
+  accessChecking: boolean;
   loginWithMicrosoft: () => Promise<void>;
   loginAsProfile: (role: AccessRole) => Promise<void>;
   logout: () => void;
@@ -107,27 +191,13 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-function buildProfileFromAccount(account: AccountInfo): UserProfile {
-  const claims = (account.idTokenClaims || {}) as Record<string, unknown>;
-  const email = (
-    account.username ||
-    (typeof claims.preferred_username === 'string' ? claims.preferred_username : '') ||
-    (typeof claims.email === 'string' ? claims.email : '')
-  ).toLowerCase();
-  const role = resolveUserRole(email);
+function buildProfileFromAccount(account: AccountInfo, forcedRole?: AccessRole): UserProfile {
+  const email = extractAccountEmail(account);
+  const role = forcedRole || resolveUserRole(email);
   return {
     name: account.name || email || account.username,
     email,
-    jobTitle:
-      role === 'admin'
-        ? 'Equipe N3'
-        : role === 'ti'
-          ? 'Service Desk'
-          : role === 'rh'
-            ? 'Recursos Humanos'
-            : role === 'gestor'
-              ? 'Gestor'
-              : 'Visualizador',
+    jobTitle: roleLabel(role),
     department: role === 'rh' ? 'RH' : 'TI',
     tenantId: account.tenantId,
     role,
@@ -159,52 +229,95 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
   bootError,
 }) => {
   const { instance, accounts, inProgress } = useMsal();
-  const [user, setUser] = useState<UserProfile | null>(() => {
-    const account = pickAccount(msalInstance.getAllAccounts(), msalInstance);
-    return account ? buildProfileFromAccount(account) : null;
-  });
+  // Nunca autentica só com conta MSAL — precisa passar pelo cadastro
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [accessChecking, setAccessChecking] = useState(() => msalInstance.getAllAccounts().length > 0);
   const [authError, setAuthError] = useState<string | null>(bootError);
+  const deniedEmailRef = React.useRef<string | null>(null);
 
-  // Sincroniza conta MSAL → user (domínio + cadastro de perfil)
+  // Conta MSAL → só libera se estiver em Usuários & Perfis (API)
   useEffect(() => {
-    const account = pickAccount(accounts, instance);
-    if (!account) return;
+    let cancelled = false;
 
-    const claims = (account.idTokenClaims || {}) as Record<string, unknown>;
-    const email = (
-      account.username ||
-      (typeof claims.preferred_username === 'string' ? claims.preferred_username : '') ||
-      (typeof claims.email === 'string' ? claims.email : '')
-    ).toLowerCase();
-    const domain = email.includes('@') ? email.split('@')[1] : '';
+    (async () => {
+      const account = pickAccount(accounts, instance);
+      if (!account) {
+        deniedEmailRef.current = null;
+        setAccessChecking(false);
+        setUser(null);
+        return;
+      }
 
-    // Não usar logoutRedirect aqui — causa loop de reload com o Entra
-    if (domain && domain !== 'diroma.com.br') {
-      setAuthError('Acesso restrito a contas @diroma.com.br');
+      const email = extractAccountEmail(account);
+      const domain = email.includes('@') ? email.split('@')[1] : '';
+
+      if (domain && domain !== 'diroma.com.br') {
+        if (!cancelled) {
+          setAuthError('Acesso restrito a contas @diroma.com.br');
+          setUser(null);
+          setAccessChecking(false);
+          deniedEmailRef.current = email;
+        }
+        return;
+      }
+
+      if (deniedEmailRef.current === email) {
+        if (!cancelled) {
+          setUser(null);
+          setAccessChecking(false);
+        }
+        return;
+      }
+
+      setAccessChecking(true);
+      // Evita flash do portal antes da validação
       setUser(null);
-      return;
-    }
 
-    if (email && !isPortalUserAllowed(email)) {
-      setAuthError(
-        `"${email}" não está cadastrado em Administração → Usuários & Perfis. Peça a um Admin N3 para liberar o acesso com o perfil correto.`
-      );
-      setUser(null);
-      return;
-    }
+      // Garante token provider com a conta atual (AUTH_DISABLED na API não exige, mas não atrapalha)
+      setMsalInstance(msalInstance);
+      setAccessTokenProvider(async () => acquireApiAccessToken(account));
 
-    instance.setActiveAccount(account);
-    setUser(buildProfileFromAccount(account));
-    localStorage.removeItem(SESSION_KEY);
-    setAuthError(null);
-  }, [accounts, instance]);
+      const result = await verifyPortalAccess(email);
+      if (cancelled) return;
 
-  // Reaplica perfil quando Usuários & Perfis muda (evita visitante com sessão “admin” stale)
+      if (!result.allowed) {
+        deniedEmailRef.current = email;
+        setAuthError(
+          result.reason ||
+            `"${email}" não está cadastrado em Administração → Usuários & Perfis. Peça a um Admin N3 para liberar o acesso.`
+        );
+        setUser(null);
+        setAccessChecking(false);
+        try {
+          instance.setActiveAccount(null);
+        } catch {
+          // ignore
+        }
+        return;
+      }
+
+      deniedEmailRef.current = null;
+      instance.setActiveAccount(account);
+      setUser(buildProfileFromAccount(account, result.role));
+      localStorage.removeItem(SESSION_KEY);
+      setAuthError(null);
+      setAccessChecking(false);
+      // Mantém catálogo local alinhado
+      void syncCatalogUsersFromApi();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accounts, instance, msalInstance]);
+
+  // Reaplica perfil quando Usuários & Perfis muda
   useEffect(() => {
     const syncRoleFromCatalog = () => {
       setUser((prev) => {
         if (!prev?.email || prev.isDemo) return prev;
         if (!isPortalUserAllowed(prev.email)) {
+          deniedEmailRef.current = prev.email;
           setAuthError(
             `"${prev.email}" não está mais ativo em Usuários & Perfis. Peça a um Admin N3 para reativar o acesso.`
           );
@@ -346,9 +459,11 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
   }, [accounts.length, user]);
 
   const logout = () => {
+    deniedEmailRef.current = null;
     localStorage.removeItem(SESSION_KEY);
     localStorage.removeItem('onboarding_demo_user');
     setUser(null);
+    setAccessChecking(false);
     if (msalSettings.configured && (accounts.length > 0 || msalInstance.getAllAccounts().length > 0)) {
       instance
         .logoutRedirect({ postLogoutRedirectUri: window.location.origin })
@@ -365,6 +480,7 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
     <AuthContext.Provider
       value={{
         user,
+        accessChecking,
         loginWithMicrosoft,
         loginAsProfile,
         logout,
@@ -413,6 +529,7 @@ const AuthProviderInsecure: React.FC<{ children: ReactNode }> = ({ children }) =
     <AuthContext.Provider
       value={{
         user,
+        accessChecking: false,
         loginWithMicrosoft: async () => {
           throw new Error(
             'Microsoft Entra ID exige HTTPS. Use https://access.diroma.com.br ou entre por perfil (demo).'

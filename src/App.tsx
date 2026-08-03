@@ -22,7 +22,7 @@ import { can, canAccessPage, defaultPageForRole } from './auth/roles';
 const POLL_MS = 8000;
 
 const AppContent: React.FC = () => {
-  const { user } = useAuth();
+  const { user, accessChecking } = useAuth();
   const { smtp, sendMail } = useWorkflowMail();
 
   const [activeTab, setActiveTab] = useState<AppPage>('dashboard');
@@ -265,6 +265,14 @@ const AppContent: React.FC = () => {
       setActiveTab(defaultPageForRole(user.role));
     }
   }, [user?.isAuthenticated, user?.role, activeTab]);
+
+  if (accessChecking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#f0f2f5] text-slate-600 text-sm">
+        Validando cadastro em Usuários &amp; Perfis…
+      </div>
+    );
+  }
 
   if (!user || !user.isAuthenticated) {
     return (

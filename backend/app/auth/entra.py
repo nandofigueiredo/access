@@ -101,7 +101,7 @@ def _resolve_role(email: str, claims: dict[str, Any], catalog_role: str | None =
     admin_emails.add("luis.figueiredo@diroma.com.br")
     admin_emails.add("n3.admin@diroma.com.br")
 
-    if normalized in admin_emails or local.startswith("n3.") or local.startswith("admin.n3"):
+    if normalized in admin_emails:
         return "admin"
 
     if catalog_role in {"admin", "ti", "rh", "gestor", "viewer"}:
@@ -118,6 +118,7 @@ def _resolve_role(email: str, claims: dict[str, Any], catalog_role: str | None =
         if "service_desk" in lowered or "servicedesk" in lowered:
             return "ti"
 
+    # Sem cadastro no catálogo e sem claim Entra: somente leitura nunca é auto-elevada
     if local.startswith("rh.") or ".rh" in local:
         return "rh"
     if local.startswith(("gestor.", "manager.")):
@@ -257,7 +258,6 @@ async def get_current_user(
     catalog_role, catalog_seeded = await _role_from_portal_catalog(db, email)
 
     normalized = email.strip().lower()
-    local = normalized.split("@")[0]
     admin_emails = {
         e.strip().lower()
         for e in (settings.admin_emails or "").split(",")
@@ -265,7 +265,7 @@ async def get_current_user(
     }
     admin_emails.add("luis.figueiredo@diroma.com.br")
     admin_emails.add("n3.admin@diroma.com.br")
-    is_fixed = normalized in admin_emails or local.startswith("n3.") or local.startswith("admin.n3")
+    is_fixed = normalized in admin_emails
 
     if catalog_seeded and catalog_role is None and not is_fixed:
         raise HTTPException(

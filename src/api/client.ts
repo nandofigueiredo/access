@@ -214,4 +214,23 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ value }),
     }),
+
+  /** Verifica se o e-mail está liberado em Usuários & Perfis (não cria sessão sozinho). */
+  getAccessStatus: async (portalEmail?: string) => {
+    const token = await tokenProvider();
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (portalEmail) headers['X-Portal-Email'] = portalEmail.trim().toLowerCase();
+    const res = await fetch(`${API_BASE}/access/status`, { headers });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(typeof err.detail === 'string' ? err.detail : 'Falha ao validar acesso.');
+    }
+    return res.json() as Promise<{
+      email: string;
+      allowed: boolean;
+      role?: string | null;
+      reason?: string | null;
+    }>;
+  },
 };

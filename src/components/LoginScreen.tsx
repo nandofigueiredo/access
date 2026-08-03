@@ -167,7 +167,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenSettings }) => {
             )}
 
             <p className="text-[11px] text-slate-400 text-center leading-relaxed">
-              Somente contas <strong className="text-slate-600">@diroma.com.br</strong> autorizadas.
+              Somente contas <strong className="text-slate-600">@diroma.com.br</strong> cadastradas
+              em Usuários &amp; Perfis podem acessar.
             </p>
 
             {debugOn && (
