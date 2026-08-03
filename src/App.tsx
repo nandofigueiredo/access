@@ -259,6 +259,13 @@ const AppContent: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    if (!user?.isAuthenticated) return;
+    if (!canAccessPage(user.role, activeTab)) {
+      setActiveTab(defaultPageForRole(user.role));
+    }
+  }, [user?.isAuthenticated, user?.role, activeTab]);
+
   if (!user || !user.isAuthenticated) {
     return (
       <>
@@ -270,13 +277,6 @@ const AppContent: React.FC = () => {
       </>
     );
   }
-
-  useEffect(() => {
-    if (!user?.isAuthenticated) return;
-    if (!canAccessPage(user.role, activeTab)) {
-      setActiveTab(defaultPageForRole(user.role));
-    }
-  }, [user?.isAuthenticated, user?.role, activeTab]);
 
   const handleAddClick = () => {
     if (activeTab === 'offboarding' && can(user?.role, 'tickets.create.offboarding')) {
