@@ -1,0 +1,204 @@
+"""Validação de JWT emitido pelo Microsoft Entra ID (Azure AD)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import jwt
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jwt import PyJWKClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import Settings, get_settings
+from app.database import get_db
+from app.models.user import User
+
+_bearer = HTTPBearer(auto_error=False)
+_jwks_clients: dict[str, PyJWKClient] = {}
+
+
+def _get_jwks_client(settings: Settings) -> PyJWKClient:
+    uri = settings.jwks_uri
+    if uri not in _jwks_clients:
+        _jwks_clients[uri] = PyJWKClient(uri, cache_keys=True, lifespan=3600)
+    return _jwks_clients[uri]
+
+
+def _extract_email(claims: dict[str, Any]) -> str | None:
+    for key in ("preferred_username", "email", "upn"):
+        value = claims.get(key)
+        if isinstance(value, str) and "@" in value:
+            return value.strip().lower()
+    emails = claims.get("emails")
+    if isinstance(emails, list) and emails:
+        return str(emails[0]).strip().lower()
+    return None
+
+
+def _domain_allowed(email: str, settings: Settings) -> bool:
+    domain = email.split("@")[-1].lower()
+    return domain in settings.allowed_domains
+
+
+def _resolve_role(email: str, claims: dict[str, Any]) -> str:
+    normalized = email.strip().lower()
+    admin_emails = {
+        e.strip().lower()
+        for e in (get_settings().admin_emails or "").split(",")
+        if e.strip()
+    }
+    if normalized in admin_emails or normalized == "luis.figueiredo@diroma.com.br":
+        return "admin"
+
+    roles = claims.get("roles") or []
+    if isinstance(roles, list):
+        lowered = {str(r).lower() for r in roles}
+        for candidate in ("admin", "ti", "rh", "gestor"):
+            if candidate in lowered:
+                return candidate
+    local = email.split("@")[0]
+    if local.startswith(("ti.", "admin.")):
+        return "ti"
+    if local.startswith("rh."):
+        return "rh"
+    if normalized.endswith("@diroma.com.br"):
+        return "ti"
+    return "viewer"
+
+
+def _decode_entra_token(token: str, settings: Settings) -> dict[str, Any]:
+    if not settings.azure_client_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AZURE_CLIENT_ID não configurado no backend.",
+        )
+
+    try:
+        signing_key = _get_jwks_client(settings).get_signing_key_from_jwt(token)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Não foi possível obter a chave JWKS: {exc}",
+        ) from exc
+
+    audiences = settings.audiences or [settings.azure_client_id]
+    last_error: Exception | None = None
+
+    for issuer in settings.issuer_candidates:
+        for audience in audiences:
+            try:
+                return jwt.decode(
+                    token,
+                    signing_key.key,
+                    algorithms=["RS256"],
+                    audience=audience,
+                    issuer=issuer,
+                    options={"verify_at_hash": False},
+                )
+            except jwt.exceptions.InvalidTokenError as exc:
+                last_error = exc
+                continue
+
+    # Multi-tenant / issuer flexível: valida assinatura + audience
+    for audience in audiences:
+        try:
+            return jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["RS256"],
+                audience=audience,
+                options={"verify_iss": False, "verify_at_hash": False},
+            )
+        except jwt.exceptions.InvalidTokenError as exc:
+            last_error = exc
+            continue
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=f"Falha na validação do token Entra ID: {last_error}",
+    )
+
+
+async def get_or_create_user(
+    db: AsyncSession,
+    *,
+    email: str,
+    name: str,
+    role: str,
+    entra_oid: str | None,
+) -> User:
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+    if user:
+        changed = False
+        if name and user.name != name:
+            user.name = name
+            changed = True
+        if entra_oid and user.entra_oid != entra_oid:
+            user.entra_oid = entra_oid
+            changed = True
+        if role and user.role != role:
+            user.role = role
+            changed = True
+        if not user.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Usuário desativado.")
+        if changed:
+            await db.flush()
+        return user
+
+    user = User(
+        name=name or email,
+        email=email,
+        role=role,
+        entra_oid=entra_oid,
+    )
+    db.add(user)
+    await db.flush()
+    return user
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> User:
+    if settings.auth_disabled:
+        return await get_or_create_user(
+            db,
+            email=settings.demo_user_email.lower(),
+            name=settings.demo_user_name,
+            role=settings.demo_user_role,
+            entra_oid="demo-local",
+        )
+
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization: Bearer <token> obrigatório.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    claims = _decode_entra_token(credentials.credentials, settings)
+    email = _extract_email(claims)
+    if not email:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token sem e-mail identificável.")
+
+    if not _domain_allowed(email, settings):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Acesso restrito a domínios corporativos: {', '.join(settings.allowed_domains)}",
+        )
+
+    name = claims.get("name") or email
+    oid = claims.get("oid") or claims.get("sub")
+    role = _resolve_role(email, claims)
+
+    return await get_or_create_user(
+        db,
+        email=email,
+        name=str(name),
+        role=role,
+        entra_oid=str(oid) if oid else None,
+    )

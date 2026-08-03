@@ -2,27 +2,39 @@ import React, { useState } from 'react';
 import { Department, WorkMode, HardwareProfile, PowerBiRole, OnboardingData, ToastMessage } from '../types';
 import { formatCPF, isValidCPF, evaluateOnboardingSLA, generateTicketId } from '../utils/formatters';
 import { UserPlus, AlertCircle, CheckCircle, Laptop, ShieldCheck, FileCheck, Building2, Server, HelpCircle } from 'lucide-react';
+import { useCatalog } from '../store/CatalogContext';
 
 interface OnboardingFormProps {
-  onSubmitTicket: (ticket: OnboardingData) => void;
+  onSubmitTicket: (ticket: OnboardingData) => void | Promise<void>;
   addToast: (toast: Omit<ToastMessage, 'id'>) => void;
   onCancel: () => void;
 }
 
 export const OnboardingForm: React.FC<OnboardingFormProps> = ({ onSubmitTicket, addToast, onCancel }) => {
+  const { activeOptions, catalog } = useCatalog();
+  const departments = activeOptions('departments');
+  const positions = activeOptions('positions');
+  const workModes = activeOptions('workModes');
+  const hardwareProfiles = activeOptions('hardwareProfiles');
+  const managers = activeOptions('managers');
+  const units = activeOptions('units');
+  const slaDays = catalog.sla.onboardingMinBusinessDays;
+
   // 1. Dados do Colaborador
   const [nomeCompleto, setNomeCompleto] = useState('');
   const [cpf, setCpf] = useState('');
   const [emailPessoal, setEmailPessoal] = useState('');
   const [cargo, setCargo] = useState('');
-  const [departamento, setDepartamento] = useState<Department>('TI');
+  const [departamento, setDepartamento] = useState<Department>((departments[0]?.name as Department) || 'TI');
   const [gestor, setGestor] = useState('');
   const [dataInicio, setDataInicio] = useState('');
-  const [modalidade, setModalidade] = useState<WorkMode>('Híbrido');
+  const [modalidade, setModalidade] = useState<WorkMode>((workModes.find((w) => w.name === 'Híbrido')?.name as WorkMode) || 'Híbrido');
   const [enderecoEntrega, setEnderecoEntrega] = useState('');
 
   // 2. Hardware
-  const [perfilHardware, setPerfilHardware] = useState<HardwareProfile>('Padrão Admin');
+  const [perfilHardware, setPerfilHardware] = useState<HardwareProfile>(
+    (hardwareProfiles[0]?.name as HardwareProfile) || 'Padrão Admin'
+  );
   const [justificativaHardware, setJustificativaHardware] = useState('');
   const [monitor, setMonitor] = useState(true);
   const [tecladoMouse, setTecladoMouse] = useState(true);
@@ -48,7 +60,7 @@ export const OnboardingForm: React.FC<OnboardingFormProps> = ({ onSubmitTicket, 
   const [assinaturaDigital, setAssinaturaDigital] = useState(false);
 
   // 4. Acesso Físico
-  const [unidade, setUnidade] = useState('Sede Principal - São Paulo');
+  const [unidade, setUnidade] = useState(units[0]?.name || 'Sede Principal — São Paulo');
   const [necessitaCracha, setNecessitaCracha] = useState(true);
 
   // LGPD Aceite
@@ -102,7 +114,7 @@ export const OnboardingForm: React.FC<OnboardingFormProps> = ({ onSubmitTicket, 
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!validateForm()) {
@@ -174,13 +186,16 @@ export const OnboardingForm: React.FC<OnboardingFormProps> = ({ onSubmitTicket, 
       },
     };
 
-    onSubmitTicket(newTicket);
-
-    addToast({
-      type: 'success',
-      title: 'Solicitação de Onboarding Enviada!',
-      message: `Ticket ${ticketId} registrado com sucesso para a TI.`,
-    });
+    try {
+      await onSubmitTicket(newTicket);
+      addToast({
+        type: 'success',
+        title: 'Solicitação de Onboarding Enviada!',
+        message: `Ticket registrado com sucesso para a TI.`,
+      });
+    } catch {
+      // Erro já notificado pelo App / API client
+    }
   };
 
   return (
@@ -274,15 +289,18 @@ export const OnboardingForm: React.FC<OnboardingFormProps> = ({ onSubmitTicket, 
               <label className="block text-xs font-medium text-slate-300 mb-1">
                 Cargo / Função <span className="text-rose-400">*</span>
               </label>
-              <input
-                type="text"
+              <select
                 value={cargo}
                 onChange={(e) => setCargo(e.target.value)}
-                placeholder="Ex: Desenvolvedor Frontend"
                 className={`w-full bg-slate-950 border ${
                   errors.cargo ? 'border-rose-500 ring-1 ring-rose-500/50' : 'border-slate-800 focus:border-emerald-500'
-                } rounded-xl px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition`}
-              />
+                } rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:outline-none transition`}
+              >
+                <option value="">Selecione...</option>
+                {positions.map((p) => (
+                  <option key={p.id} value={p.name}>{p.name}</option>
+                ))}
+              </select>
               {errors.cargo && <p className="text-xs text-rose-400 mt-1">{errors.cargo}</p>}
             </div>
 
@@ -296,14 +314,9 @@ export const OnboardingForm: React.FC<OnboardingFormProps> = ({ onSubmitTicket, 
                 onChange={(e) => setDepartamento(e.target.value as Department)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none transition"
               >
-                <option value="TI">TI / Tecnologia</option>
-                <option value="Financeiro">Financeiro</option>
-                <option value="RH">Recursos Humanos / DHO</option>
-                <option value="Operações">Operações</option>
-                <option value="Comercial">Comercial / Vendas</option>
-                <option value="Jurídico">Jurídico</option>
-                <option value="Marketing">Marketing</option>
-                <option value="Engenharia">Engenharia</option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.name}>{d.name}</option>
+                ))}
               </select>
             </div>
 
@@ -312,15 +325,18 @@ export const OnboardingForm: React.FC<OnboardingFormProps> = ({ onSubmitTicket, 
               <label className="block text-xs font-medium text-slate-300 mb-1">
                 Gestor Responsável <span className="text-rose-400">*</span>
               </label>
-              <input
-                type="text"
+              <select
                 value={gestor}
                 onChange={(e) => setGestor(e.target.value)}
-                placeholder="Ex: Ana Paula Souza"
                 className={`w-full bg-slate-950 border ${
                   errors.gestor ? 'border-rose-500 ring-1 ring-rose-500/50' : 'border-slate-800 focus:border-emerald-500'
-                } rounded-xl px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition`}
-              />
+                } rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:outline-none transition`}
+              >
+                <option value="">Selecione...</option>
+                {managers.map((m) => (
+                  <option key={m.id} value={m.name}>{m.name}</option>
+                ))}
+              </select>
               {errors.gestor && <p className="text-xs text-rose-400 mt-1">{errors.gestor}</p>}
             </div>
 
@@ -338,6 +354,7 @@ export const OnboardingForm: React.FC<OnboardingFormProps> = ({ onSubmitTicket, 
                 } rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:outline-none transition`}
               />
               {errors.dataInicio && <p className="text-xs text-rose-400 mt-1">{errors.dataInicio}</p>}
+              <p className="text-[10px] text-slate-500 mt-1">SLA configurado: {slaDays} dias úteis de antecedência.</p>
             </div>
 
             {/* Modalidade */}
@@ -350,9 +367,9 @@ export const OnboardingForm: React.FC<OnboardingFormProps> = ({ onSubmitTicket, 
                 onChange={(e) => setModalidade(e.target.value as WorkMode)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none transition"
               >
-                <option value="Presencial">Presencial (Sede)</option>
-                <option value="Híbrido">Híbrido (Sede + Remoto)</option>
-                <option value="Remoto">100% Remoto</option>
+                {workModes.map((w) => (
+                  <option key={w.id} value={w.name}>{w.name}</option>
+                ))}
               </select>
             </div>
           </div>
@@ -735,10 +752,9 @@ export const OnboardingForm: React.FC<OnboardingFormProps> = ({ onSubmitTicket, 
                 onChange={(e) => setUnidade(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:border-amber-500 focus:outline-none transition"
               >
-                <option value="Sede Principal - São Paulo">Sede Principal - São Paulo (SP)</option>
-                <option value="Sede Rio de Janeiro">Filial - Rio de Janeiro (RJ)</option>
-                <option value="Unidade Curitiba">Unidade Curitiba (PR)</option>
-                <option value="Hub Remoto">Hub Remoto / Home Office</option>
+                {units.map((u) => (
+                  <option key={u.id} value={u.name}>{u.name}</option>
+                ))}
               </select>
             </div>
 

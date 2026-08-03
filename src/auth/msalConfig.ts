@@ -1,5 +1,6 @@
 import { Configuration, LogLevel, PublicClientApplication } from '@azure/msal-browser';
 import { MsalConfigState } from '../types';
+import { msalConfig as envMsalConfig, loginRequest as envLoginRequest } from './authConfig';
 
 const STORAGE_KEY = 'msal_config_settings_ti';
 
@@ -12,11 +13,17 @@ export const getStoredMsalSettings = (): MsalConfigState => {
       // ignore
     }
   }
+
+  const envClientId = import.meta.env.VITE_AZURE_CLIENT_ID as string | undefined;
+  const envTenantId = import.meta.env.VITE_AZURE_TENANT_ID as string | undefined;
+  const envRedirect = import.meta.env.VITE_AZURE_REDIRECT_URI as string | undefined;
+  const configured = Boolean(envClientId && envClientId !== '00000000-0000-0000-0000-000000000000');
+
   return {
-    clientId: '00000000-0000-0000-0000-000000000000', // Default dummy or customizable via Settings UI
-    tenantId: 'common',
-    redirectUri: typeof window !== 'undefined' ? window.location.origin : '',
-    configured: false,
+    clientId: envClientId || envMsalConfig.auth.clientId,
+    tenantId: envTenantId || (envMsalConfig.auth.authority?.split('/').pop() ?? 'common'),
+    redirectUri: envRedirect || (typeof window !== 'undefined' ? window.location.origin : ''),
+    configured,
   };
 };
 
@@ -27,10 +34,10 @@ export const saveMsalSettings = (settings: MsalConfigState) => {
 export const createMsalInstance = (settings: MsalConfigState = getStoredMsalSettings()) => {
   const msalConfig: Configuration = {
     auth: {
-      clientId: settings.clientId || '00000000-0000-0000-0000-000000000000',
+      clientId: settings.clientId || envMsalConfig.auth.clientId,
       authority: `https://login.microsoftonline.com/${settings.tenantId || 'common'}`,
-      redirectUri: window.location.origin,
-      postLogoutRedirectUri: window.location.origin,
+      redirectUri: settings.redirectUri || window.location.origin,
+      postLogoutRedirectUri: settings.redirectUri || window.location.origin,
     },
     cache: {
       cacheLocation: 'localStorage',
@@ -62,6 +69,4 @@ export const createMsalInstance = (settings: MsalConfigState = getStoredMsalSett
   return new PublicClientApplication(msalConfig);
 };
 
-export const loginRequest = {
-  scopes: ['User.Read', 'Directory.Read.All'],
-};
+export const loginRequest = envLoginRequest;

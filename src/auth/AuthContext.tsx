@@ -3,39 +3,59 @@ import { MsalProvider, useMsal } from '@azure/msal-react';
 import { PublicClientApplication } from '@azure/msal-browser';
 import { UserProfile, MsalConfigState } from '../types';
 import { createMsalInstance, getStoredMsalSettings, loginRequest, saveMsalSettings } from './msalConfig';
+import { acquireApiAccessToken, setAccessTokenProvider, setMsalInstance, api } from '../api/client';
+
+/** Contas com papel admin fixo no Portal TI diRoma */
+export const ADMIN_EMAILS = new Set(['luis.figueiredo@diroma.com.br']);
+
+export function resolveUserRole(email: string): UserProfile['role'] {
+  const normalized = email.trim().toLowerCase();
+  if (ADMIN_EMAILS.has(normalized)) return 'admin';
+  if (normalized.startsWith('rh.') || normalized.includes('.rh@')) return 'rh';
+  if (normalized.endsWith('@diroma.com.br')) return 'ti';
+  return 'viewer';
+}
 
 interface AuthContextType {
   user: UserProfile | null;
   loginWithMicrosoft: () => Promise<void>;
-  loginDemo: (role?: 'admin' | 'rh' | 'gestor') => void;
   logout: () => void;
   msalSettings: MsalConfigState;
   updateMsalSettings: (settings: MsalConfigState) => void;
+  getAccessToken: () => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const DEMO_USER_ADMIN: UserProfile = {
-  name: 'Ana Paula Souza',
-  email: 'ana.souza@empresa.com.br',
-  jobTitle: 'Coordenadora de TI & Segurança',
+/** Fallback local quando Entra ID ainda não está configurado — sempre o admin diRoma */
+const ADMIN_BOOTSTRAP: UserProfile = {
+  name: 'Luis Figueiredo',
+  email: 'luis.figueiredo@diroma.com.br',
+  jobTitle: 'Administrador de TI',
   department: 'TI',
-  photoUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
-  tenantId: 'e8d1a123-entra-id-demo-tenant',
+  tenantId: 'diroma-entra-id',
+  role: 'admin',
   isAuthenticated: true,
-  isDemo: true,
+  isDemo: false,
 };
 
-const DEMO_USER_RH: UserProfile = {
-  name: 'Carlos Alberto Lima',
-  email: 'carlos.lima@empresa.com.br',
-  jobTitle: 'Especialista em DHO & RH',
-  department: 'RH',
-  photoUrl: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?w=150&auto=format&fit=crop&q=80',
-  tenantId: 'e8d1a123-entra-id-demo-tenant',
-  isAuthenticated: true,
-  isDemo: true,
-};
+function buildProfileFromAccount(account: {
+  name?: string;
+  username: string;
+  tenantId?: string;
+}): UserProfile {
+  const email = account.username.toLowerCase();
+  return {
+    name: account.name || account.username,
+    email,
+    jobTitle: ADMIN_EMAILS.has(email) ? 'Administrador de TI' : 'Colaborador Microsoft Entra ID',
+    department: 'TI',
+    tenantId: account.tenantId,
+    role: resolveUserRole(email),
+    isAuthenticated: true,
+    isDemo: false,
+  };
+}
 
 interface AuthProviderInnerProps {
   children: ReactNode;
@@ -46,77 +66,124 @@ interface AuthProviderInnerProps {
 
 const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
   children,
+  msalInstance,
   msalSettings,
   setMsalSettings,
 }) => {
   const { instance, accounts } = useMsal();
-  const [user, setUser] = useState<UserProfile | null>(() => {
-    const savedDemo = localStorage.getItem('onboarding_demo_user');
-    if (savedDemo) {
-      try {
-        return JSON.parse(savedDemo);
-      } catch {
-        // ignore
-      }
-    }
-    return null;
-  });
+  const [user, setUser] = useState<UserProfile | null>(null);
 
   useEffect(() => {
-    if (accounts.length > 0 && !user?.isDemo) {
-      const account = accounts[0];
-      setUser({
-        name: account.name || account.username || 'Usuário Microsoft',
-        email: account.username,
-        jobTitle: 'Colaborador Entra ID',
-        department: 'Corporativo',
-        tenantId: account.tenantId,
-        isAuthenticated: true,
-        isDemo: false,
-      });
+    setMsalInstance(msalInstance);
+    setAccessTokenProvider(async () => {
+      if (!user || (user.email === ADMIN_BOOTSTRAP.email && !msalSettings.configured)) {
+        return null;
+      }
+      return acquireApiAccessToken(accounts[0] || null);
+    });
+  }, [msalInstance, accounts, user, msalSettings.configured]);
+
+  useEffect(() => {
+    if (accounts.length > 0) {
+      setUser(buildProfileFromAccount(accounts[0]));
     }
   }, [accounts]);
 
-  const loginWithMicrosoft = async () => {
-    try {
-      if (!msalSettings.configured || msalSettings.clientId === '00000000-0000-0000-0000-000000000000') {
-        // If MSAL is not configured with a real Client ID, simulate smooth MSAL authentication
-        loginDemo('admin');
-        return;
-      }
-      const response = await instance.loginPopup(loginRequest);
-      if (response && response.account) {
-        setUser({
-          name: response.account.name || response.account.username,
-          email: response.account.username,
-          jobTitle: 'Colaborador Microsoft Entra ID',
-          department: 'Corporativo',
-          tenantId: response.account.tenantId,
-          isAuthenticated: true,
-          isDemo: false,
+  // Alinha papel/nome com o backend (users.me) quando a API estiver no ar
+  useEffect(() => {
+    if (!user?.isAuthenticated || !user.email) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const me = await api.getMe();
+        if (cancelled || !me?.email) return;
+        setUser((prev) => {
+          if (!prev) return prev;
+          const nextRole = (me.role as UserProfile['role']) || prev.role;
+          if (
+            prev.name === (me.name || prev.name) &&
+            prev.role === nextRole &&
+            prev.jobTitle === (me.jobTitle || prev.jobTitle) &&
+            prev.department === (me.department || prev.department)
+          ) {
+            return prev;
+          }
+          return {
+            ...prev,
+            name: me.name || prev.name,
+            email: me.email || prev.email,
+            role: nextRole,
+            jobTitle: me.jobTitle || prev.jobTitle,
+            department: me.department || prev.department,
+            isDemo: me.isDemo ?? prev.isDemo,
+          };
         });
-        localStorage.removeItem('onboarding_demo_user');
+      } catch {
+        // API offline — mantém papel local
       }
-    } catch (err: any) {
-      console.warn('MSAL Login Popup failed or cancelled:', err);
-      // Fallback to demo mode gracefully if Azure popup is blocked or unconfigured
-      loginDemo('admin');
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync once per session email
+  }, [user?.isAuthenticated, user?.email]);
+
+  const getAccessToken = async () => {
+    if (!msalSettings.configured) return null;
+    return acquireApiAccessToken(accounts[0] || null);
+  };
+
+  const loginWithMicrosoft = async () => {
+    // Sem Client ID real: autentica como admin diRoma (único caminho de acesso na UI)
+    if (!msalSettings.configured || msalSettings.clientId === '00000000-0000-0000-0000-000000000000') {
+      setUser(ADMIN_BOOTSTRAP);
+      localStorage.setItem('onboarding_diroma_session', JSON.stringify(ADMIN_BOOTSTRAP));
+      return;
+    }
+
+    try {
+      const response = await instance.loginPopup(loginRequest);
+      if (response?.account) {
+        const profile = buildProfileFromAccount(response.account);
+        const domain = profile.email.split('@')[1];
+        if (domain !== 'diroma.com.br') {
+          await instance.logoutPopup({ postLogoutRedirectUri: window.location.origin }).catch(() => undefined);
+          setUser(null);
+          throw new Error('Acesso restrito a contas @diroma.com.br');
+        }
+        setUser(profile);
+        localStorage.removeItem('onboarding_diroma_session');
+      }
+    } catch (err: unknown) {
+      console.warn('MSAL Login falhou:', err);
+      throw err;
     }
   };
 
-  const loginDemo = (role: 'admin' | 'rh' | 'gestor' = 'admin') => {
-    const demoProfile = role === 'rh' ? DEMO_USER_RH : DEMO_USER_ADMIN;
-    setUser(demoProfile);
-    localStorage.setItem('onboarding_demo_user', JSON.stringify(demoProfile));
-  };
+  // Restaura sessão bootstrap (dev / pré-Entra)
+  useEffect(() => {
+    if (accounts.length > 0 || user) return;
+    const saved = localStorage.getItem('onboarding_diroma_session');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as UserProfile;
+        if (parsed?.email && resolveUserRole(parsed.email) === 'admin') {
+          setUser({ ...parsed, role: 'admin', isAuthenticated: true });
+        }
+      } catch {
+        localStorage.removeItem('onboarding_diroma_session');
+      }
+    }
+  }, [accounts.length, user]);
 
   const logout = () => {
-    if (user && !user.isDemo && accounts.length > 0) {
-      instance.logoutPopup({
-        postLogoutRedirectUri: window.location.origin,
-      }).catch(err => console.warn('Logout error:', err));
+    if (user && msalSettings.configured && accounts.length > 0) {
+      instance
+        .logoutPopup({ postLogoutRedirectUri: window.location.origin })
+        .catch((err) => console.warn('Logout error:', err));
     }
     setUser(null);
+    localStorage.removeItem('onboarding_diroma_session');
     localStorage.removeItem('onboarding_demo_user');
   };
 
@@ -130,10 +197,10 @@ const AuthProviderInner: React.FC<AuthProviderInnerProps> = ({
       value={{
         user,
         loginWithMicrosoft,
-        loginDemo,
         logout,
         msalSettings,
         updateMsalSettings,
+        getAccessToken,
       }}
     >
       {children}

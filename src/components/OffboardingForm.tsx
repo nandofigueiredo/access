@@ -2,14 +2,19 @@ import React, { useState } from 'react';
 import { OffboardingData, ReturnLogisticsMode, ToastMessage } from '../types';
 import { generateTicketId } from '../utils/formatters';
 import { UserMinus, AlertOctagon, ShieldAlert, Package, CheckSquare, Clock, FileWarning, HelpCircle } from 'lucide-react';
+import { useCatalog } from '../store/CatalogContext';
 
 interface OffboardingFormProps {
-  onSubmitTicket: (ticket: OffboardingData) => void;
+  onSubmitTicket: (ticket: OffboardingData) => void | Promise<void>;
   addToast: (toast: Omit<ToastMessage, 'id'>) => void;
   onCancel: () => void;
 }
 
 export const OffboardingForm: React.FC<OffboardingFormProps> = ({ onSubmitTicket, addToast, onCancel }) => {
+  const { activeOptions } = useCatalog();
+  const managers = activeOptions('managers');
+  const returnMethods = activeOptions('returnMethods');
+
   // 1. Dados da Revogação
   const [nomeCompleto, setNomeCompleto] = useState('');
   const [emailCorporativo, setEmailCorporativo] = useState('');
@@ -32,7 +37,9 @@ export const OffboardingForm: React.FC<OffboardingFormProps> = ({ onSubmitTicket
   const [smartphone, setSmartphone] = useState(false);
   const [cracha, setCracha] = useState(true);
 
-  const [modalidadeDevolucao, setModalidadeDevolucao] = useState<ReturnLogisticsMode>('Presencial');
+  const [modalidadeDevolucao, setModalidadeDevolucao] = useState<ReturnLogisticsMode>(
+    (returnMethods[0]?.name as ReturnLogisticsMode) || 'Presencial'
+  );
   const [prazoLimiteDevolucao, setPrazoLimiteDevolucao] = useState('');
 
   // 4. Checklist TI
@@ -75,7 +82,7 @@ export const OffboardingForm: React.FC<OffboardingFormProps> = ({ onSubmitTicket
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!validateForm()) {
@@ -127,13 +134,16 @@ export const OffboardingForm: React.FC<OffboardingFormProps> = ({ onSubmitTicket
       },
     };
 
-    onSubmitTicket(newTicket);
-
-    addToast({
-      type: 'warning',
-      title: 'Offboarding de TI Registrado!',
-      message: `Ticket ${ticketId} em fila para bloqueio Zero-Day em ${dataDesligamento} às ${horaDesligamento}.`,
-    });
+    try {
+      await onSubmitTicket(newTicket);
+      addToast({
+        type: 'warning',
+        title: 'Offboarding de TI Registrado!',
+        message: `Ticket em fila para bloqueio Zero-Day em ${dataDesligamento} às ${horaDesligamento}.`,
+      });
+    } catch {
+      // Erro já notificado pelo App / API client
+    }
   };
 
   return (
@@ -207,19 +217,27 @@ export const OffboardingForm: React.FC<OffboardingFormProps> = ({ onSubmitTicket
               <label className="block text-xs font-medium text-slate-300 mb-1">
                 Gestor Direto Responsável <span className="text-rose-400">*</span>
               </label>
-              <input
-                type="text"
+              <select
                 value={gestor}
                 onChange={(e) => {
-                  setGestor(e.target.value);
-                  if (!emailDestinoRedirecionamento) setEmailDestinoRedirecionamento(e.target.value.toLowerCase().replace(/\s+/g, '.') + '@empresa.com.br');
-                  if (!emailDestinoArquivos) setEmailDestinoArquivos(e.target.value.toLowerCase().replace(/\s+/g, '.') + '@empresa.com.br');
+                  const name = e.target.value;
+                  setGestor(name);
+                  const mgr = managers.find((m) => m.name === name);
+                  const email = typeof mgr?.meta?.email === 'string' ? mgr.meta.email : '';
+                  if (email) {
+                    if (!emailDestinoRedirecionamento) setEmailDestinoRedirecionamento(email);
+                    if (!emailDestinoArquivos) setEmailDestinoArquivos(email);
+                  }
                 }}
-                placeholder="Ex: Roberto Costa"
                 className={`w-full bg-slate-950 border ${
                   errors.gestor ? 'border-rose-500 ring-1 ring-rose-500/50' : 'border-slate-800 focus:border-rose-500'
-                } rounded-xl px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none transition`}
-              />
+                } rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:outline-none transition`}
+              >
+                <option value="">Selecione...</option>
+                {managers.map((m) => (
+                  <option key={m.id} value={m.name}>{m.name}</option>
+                ))}
+              </select>
               {errors.gestor && <p className="text-xs text-rose-400 mt-1">{errors.gestor}</p>}
             </div>
 
@@ -477,8 +495,9 @@ export const OffboardingForm: React.FC<OffboardingFormProps> = ({ onSubmitTicket
                 onChange={(e) => setModalidadeDevolucao(e.target.value as ReturnLogisticsMode)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none transition"
               >
-                <option value="Presencial">Entrega direta no RH / Presencial</option>
-                <option value="Correios">Envio de Código de Postagem (Logística Reversa Correios / Transportadora)</option>
+                {returnMethods.map((m) => (
+                  <option key={m.id} value={m.name}>{m.name}</option>
+                ))}
               </select>
             </div>
 

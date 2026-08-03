@@ -9,7 +9,7 @@ interface MsalSettingsModalProps {
 }
 
 export const MsalSettingsModal: React.FC<MsalSettingsModalProps> = ({ onClose, addToast }) => {
-  const { msalSettings, updateMsalSettings, loginDemo } = useAuth();
+  const { msalSettings, updateMsalSettings } = useAuth();
 
   const [clientId, setClientId] = useState(msalSettings.clientId);
   const [tenantId, setTenantId] = useState(msalSettings.tenantId);
@@ -115,7 +115,9 @@ export const MsalSettingsModal: React.FC<MsalSettingsModalProps> = ({ onClose, a
           <div className="p-3.5 rounded-xl bg-blue-950/40 border border-blue-500/30 text-blue-200 text-[11px] leading-relaxed flex items-start gap-2.5">
             <ShieldCheck className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
             <span>
-              Caso nenhum Client ID seja configurado, o aplicativo utiliza automaticamente a autenticação simulada de demonstração corporativa para navegação e testes instantâneos.
+              Caso nenhum Client ID seja configurado, o botão “Acessar com Microsoft” autentica como
+              <strong> luis.figueiredo@diroma.com.br</strong> (admin) para desenvolvimento local.
+              Em produção, configure o App Registration do Entra ID.
             </span>
           </div>
 

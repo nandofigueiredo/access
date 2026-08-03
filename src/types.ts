@@ -1,10 +1,14 @@
+import type { TicketWorkflow } from './types/workflow';
+
 export type TicketType = 'onboarding' | 'offboarding';
-export type TicketStatus = 'Pendente TI' | 'Em Andamento' | 'Concluído';
+export type TicketStatus = 'Pendente TI' | 'Em Andamento' | 'Concluído' | 'Aguardando N3' | 'Pronta p/ Fechamento';
 export type WorkMode = 'Presencial' | 'Híbrido' | 'Remoto';
 export type Department = 'Financeiro' | 'RH' | 'Operações' | 'Comercial' | 'TI' | 'Jurídico' | 'Marketing' | 'Engenharia';
 export type HardwareProfile = 'Padrão Admin' | 'Padrão Avançado';
 export type PowerBiRole = 'Visualizador' | 'Criador' | 'Nenhum';
 export type ReturnLogisticsMode = 'Presencial' | 'Correios';
+
+export type { TicketWorkflow };
 
 export interface UserProfile {
   name: string;
@@ -13,6 +17,7 @@ export interface UserProfile {
   department?: string;
   photoUrl?: string;
   tenantId?: string;
+  role?: 'admin' | 'ti' | 'rh' | 'gestor' | 'viewer';
   isAuthenticated: boolean;
   isDemo?: boolean;
 }
@@ -85,6 +90,10 @@ export interface OnboardingData {
     termoEnviado: boolean;
   };
   itNotes?: string;
+  /** Workflow multiárea */
+  workflow?: TicketWorkflow;
+  requesterEmail?: string;
+  assignedQueue?: string;
 }
 
 export interface OffboardingData {
@@ -130,6 +139,9 @@ export interface OffboardingData {
     registroLogsAuditoria: boolean;
   };
   itNotes?: string;
+  workflow?: TicketWorkflow;
+  requesterEmail?: string;
+  assignedQueue?: string;
 }
 
 export type Ticket = OnboardingData | OffboardingData;

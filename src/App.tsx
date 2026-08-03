@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AuthProvider, useAuth } from './auth/AuthContext';
+import { CatalogProvider } from './store/CatalogContext';
+import { WorkflowMailProvider, useWorkflowMail } from './store/WorkflowMailContext';
 import { Header } from './components/Header';
-import { Sidebar, ActiveTab } from './components/Sidebar';
+import { Sidebar } from './components/Sidebar';
 import { LoginScreen } from './components/LoginScreen';
 import { Dashboard } from './components/Dashboard';
 import { OnboardingForm } from './components/OnboardingForm';
@@ -10,121 +12,311 @@ import { TicketDetailModal } from './components/TicketDetailModal';
 import { PrintTermModal } from './components/PrintTermModal';
 import { MsalSettingsModal } from './components/MsalSettingsModal';
 import { ToastContainer } from './components/Toast';
+import { AdminRouter } from './components/admin/AdminRouter';
 import { Ticket, TicketStatus, ToastMessage, OnboardingData, OffboardingData } from './types';
-import { INITIAL_TICKETS } from './data/initialTickets';
+import { AppPage } from './types/catalog';
+import { api, USE_API } from './api/client';
+import { createInitialWorkflow } from './services/workflowEngine';
 
-const TICKETS_STORAGE_KEY = 'portal_ti_onboarding_offboarding_tickets';
+const POLL_MS = 8000;
 
 const AppContent: React.FC = () => {
   const { user } = useAuth();
+  const { smtp, sendMail } = useWorkflowMail();
 
-  // Active Navigation Tab
-  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
-
-  // Tickets State
-  const [tickets, setTickets] = useState<Ticket[]>(() => {
-    const saved = localStorage.getItem(TICKETS_STORAGE_KEY);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        // ignore
-      }
-    }
-    return INITIAL_TICKETS;
-  });
-
-  // Modal States
+  const [activeTab, setActiveTab] = useState<AppPage>('dashboard');
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [loadingTickets, setLoadingTickets] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [printTicket, setPrintTicket] = useState<Ticket | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-
-  // Toasts State
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const selectedIdRef = useRef<string | null>(null);
+  const toastWarnedRef = useRef(false);
 
-  const addToast = (toast: Omit<ToastMessage, 'id'>) => {
+  useEffect(() => {
+    selectedIdRef.current = selectedTicket?.id ?? null;
+  }, [selectedTicket?.id]);
+
+  const addToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
     const id = Math.random().toString(36).substring(2, 9);
-    const newToast = { ...toast, id };
-    setToasts((prev) => [...prev, newToast]);
-
+    setToasts((prev) => [...prev, { ...toast, id }]);
     setTimeout(() => {
-      dismissToast(id);
+      setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 5000);
-  };
+  }, []);
 
   const dismissToast = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Sync tickets to LocalStorage
+  const refreshTickets = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!USE_API || !user?.isAuthenticated) return;
+      if (!opts?.silent) setLoadingTickets(true);
+      try {
+        const data = await api.listAllTickets();
+        setTickets(data);
+        setSyncError(null);
+        toastWarnedRef.current = false;
+        const openId = selectedIdRef.current;
+        if (openId) {
+          const fresh = data.find((t) => t.id === openId);
+          if (fresh) setSelectedTicket(fresh);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Falha ao sincronizar com o backend.';
+        setSyncError(message);
+        if (!toastWarnedRef.current) {
+          toastWarnedRef.current = true;
+          addToast({
+            type: 'warning',
+            title: 'API indisponível',
+            message: 'Não foi possível sincronizar com o banco. Tentando novamente…',
+          });
+        }
+      } finally {
+        if (!opts?.silent) setLoadingTickets(false);
+      }
+    },
+    [user?.isAuthenticated, addToast]
+  );
+
   useEffect(() => {
-    localStorage.setItem(TICKETS_STORAGE_KEY, JSON.stringify(tickets));
-  }, [tickets]);
+    if (!user?.isAuthenticated || !USE_API) return;
+    void refreshTickets();
+    const timer = window.setInterval(() => {
+      void refreshTickets({ silent: true });
+    }, POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [user?.isAuthenticated, refreshTickets]);
 
-  // Handlers for Tickets
-  const handleAddTicket = (newTicket: Ticket) => {
-    setTickets((prev) => [newTicket, ...prev]);
-    setActiveTab('dashboard');
-  };
-
-  const handleUpdateStatus = (ticketId: string, newStatus: TicketStatus) => {
-    setTickets((prev) =>
-      prev.map((t) => (t.id === ticketId ? { ...t, status: newStatus, updatedAt: new Date().toISOString() } : t))
-    );
-
-    addToast({
-      type: 'info',
-      title: 'Status Atualizado',
-      message: `Solicitação ${ticketId} alterada para ${newStatus}.`,
-    });
-  };
-
-  const handleUpdateTicket = (updatedTicket: Ticket) => {
-    setTickets((prev) => prev.map((t) => (t.id === updatedTicket.id ? updatedTicket : t)));
-    setSelectedTicket(updatedTicket);
-  };
-
-  const handleDeleteTicket = (ticketId: string) => {
-    if (confirm(`Tem certeza que deseja excluir o ticket ${ticketId}?`)) {
-      setTickets((prev) => prev.filter((t) => t.id !== ticketId));
+  const handleAddTicket = async (newTicket: Ticket) => {
+    if (!USE_API) {
       addToast({
-        type: 'warning',
-        title: 'Ticket Excluído',
-        message: `Solicitação ${ticketId} foi removida.`,
+        type: 'error',
+        title: 'API não configurada',
+        message: 'Defina VITE_API_BASE_URL no .env para gravar no banco.',
+      });
+      throw new Error('API não configurada');
+    }
+
+    const actor = user?.email || newTicket.createdBy;
+    const workflow = newTicket.workflow || createInitialWorkflow(actor);
+
+    try {
+      let created: Ticket;
+      if (newTicket.type === 'onboarding') {
+        const { id, type, status, createdAt, updatedAt, createdBy, itChecklist, itNotes, ...body } =
+          newTicket as OnboardingData;
+        void id;
+        void type;
+        void status;
+        void createdAt;
+        void updatedAt;
+        void createdBy;
+        void itChecklist;
+        void itNotes;
+        created = await api.createOnboarding({
+          ...body,
+          workflow,
+          requesterEmail: user?.email || body.requesterEmail,
+          assignedQueue: body.assignedQueue || 'Service Desk N1',
+        });
+      } else {
+        const { id, type, status, createdAt, updatedAt, createdBy, itChecklist, itNotes, ...body } =
+          newTicket as OffboardingData;
+        void id;
+        void type;
+        void status;
+        void createdAt;
+        void updatedAt;
+        void createdBy;
+        void itChecklist;
+        void itNotes;
+        created = await api.createOffboarding({
+          ...body,
+          workflow,
+          requesterEmail: user?.email || body.requesterEmail,
+          assignedQueue: body.assignedQueue || 'Service Desk N1',
+        });
+      }
+
+      setTickets((prev) => [created, ...prev.filter((t) => t.id !== created.id)]);
+      sendMail({
+        to: [smtp.serviceDeskInbox],
+        subject: `[Nova] ${created.id} — ${created.type} · ${created.nomeCompleto}`,
+        body: `Nova solicitação na fila do Service Desk.\nID: ${created.id}\nTipo: ${created.type}\nColaborador: ${created.nomeCompleto}\nSolicitante: ${actor}`,
+        template: 'ticket_created_sd',
+        ticketId: created.id,
+      });
+      if (smtp.notifyRequesterOnCreate && user?.email) {
+        sendMail({
+          to: [user.email],
+          subject: `[Registrada] ${created.id}`,
+          body: `Sua solicitação ${created.id} foi registrada e encaminhada ao Service Desk.`,
+          template: 'ticket_created_requester',
+          ticketId: created.id,
+        });
+      }
+      addToast({
+        type: 'success',
+        title: 'Salvo no banco',
+        message: `${created.id} criado e sincronizado.`,
+      });
+      setActiveTab('tools-workflow');
+      void refreshTickets({ silent: true });
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Erro ao salvar',
+        message: err instanceof Error ? err.message : 'Falha ao criar chamado na API.',
+      });
+      throw err;
+    }
+  };
+
+  const handleUpdateStatus = async (ticketId: string, newStatus: TicketStatus) => {
+    if (!USE_API) return;
+    try {
+      const result = await api.updateStatus(ticketId, newStatus);
+      setTickets((prev) =>
+        prev.map((t) =>
+          t.id === ticketId ? { ...t, status: result.status, updatedAt: result.updatedAt } : t
+        )
+      );
+      addToast({
+        type: 'info',
+        title: 'Status Atualizado',
+        message: `Solicitação ${ticketId} alterada para ${newStatus}.`,
+      });
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Erro ao atualizar',
+        message: err instanceof Error ? err.message : 'Falha ao atualizar status.',
       });
     }
   };
 
-  // If user is not authenticated, show LoginScreen
+  const handleUpdateTicket = async (updatedTicket: Ticket) => {
+    if (!USE_API) return;
+    try {
+      const result = await api.updateStatus(updatedTicket.id, updatedTicket.status, {
+        itNotes: updatedTicket.itNotes,
+        itChecklist: updatedTicket.itChecklist as Record<string, boolean> | undefined,
+        workflow: updatedTicket.workflow as Record<string, unknown> | undefined,
+        requesterEmail: updatedTicket.requesterEmail,
+        assignedQueue: updatedTicket.assignedQueue,
+      });
+      const merged: Ticket = {
+        ...updatedTicket,
+        status: result.status,
+        updatedAt: result.updatedAt,
+        itNotes: result.itNotes ?? updatedTicket.itNotes,
+        itChecklist: (result.itChecklist as Ticket['itChecklist']) ?? updatedTicket.itChecklist,
+        workflow: (result.workflow as Ticket['workflow']) ?? updatedTicket.workflow,
+        requesterEmail: result.requesterEmail ?? updatedTicket.requesterEmail,
+        assignedQueue: result.assignedQueue ?? updatedTicket.assignedQueue,
+      };
+      setTickets((prev) => prev.map((t) => (t.id === merged.id ? merged : t)));
+      setSelectedTicket(merged);
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Erro ao atualizar',
+        message: err instanceof Error ? err.message : 'Falha ao sincronizar ticket.',
+      });
+    }
+  };
+
+  const handleDeleteTicket = async (ticketId: string) => {
+    if (!confirm(`Tem certeza que deseja excluir o ticket ${ticketId}?`)) return;
+    if (!USE_API) return;
+
+    try {
+      if (ticketId.startsWith('ONB')) {
+        await api.deleteOnboarding(ticketId);
+      } else {
+        await api.deleteOffboarding(ticketId);
+      }
+      setTickets((prev) => prev.filter((t) => t.id !== ticketId));
+      if (selectedIdRef.current === ticketId) setSelectedTicket(null);
+      addToast({
+        type: 'warning',
+        title: 'Ticket Excluído',
+        message: `Solicitação ${ticketId} foi removida do banco.`,
+      });
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Erro ao excluir',
+        message: err instanceof Error ? err.message : 'Falha ao excluir chamado.',
+      });
+    }
+  };
+
   if (!user || !user.isAuthenticated) {
     return (
       <>
         <LoginScreen onOpenSettings={() => setIsSettingsOpen(true)} />
-
         {isSettingsOpen && (
-          <MsalSettingsModal
-            onClose={() => setIsSettingsOpen(false)}
-            addToast={addToast}
-          />
+          <MsalSettingsModal onClose={() => setIsSettingsOpen(false)} addToast={addToast} />
         )}
-
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       </>
     );
   }
 
+  const handleAddClick = () => {
+    if (activeTab === 'offboarding') {
+      setActiveTab('offboarding');
+      return;
+    }
+    setActiveTab('onboarding');
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
-      {/* Header */}
-      <Header onOpenSettings={() => setIsSettingsOpen(true)} />
+    <div className="min-h-screen bg-[#f0f2f5] text-slate-900 flex flex-col lg:flex-row">
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        tickets={tickets}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
+      />
 
-      {/* Main Layout */}
-      <div className="flex-1 flex flex-col lg:flex-row max-w-7xl w-full mx-auto">
-        {/* Navigation Sidebar */}
-        <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} tickets={tickets} />
+      <div className="flex-1 flex flex-col min-w-0 min-h-screen">
+        <Header
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          activeTab={activeTab}
+          onAddClick={handleAddClick}
+        />
 
-        {/* Dynamic Content Body */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8">
+        <main className="flex-1 p-3 sm:p-4">
+          {(loadingTickets || syncError) && (
+            <div
+              className={`mb-3 text-[12px] ${syncError ? 'text-amber-700' : 'text-slate-500'} flex items-center gap-2`}
+            >
+              <span>
+                {syncError
+                  ? `Sync com banco falhou: ${syncError}`
+                  : 'Sincronizando chamados com o banco…'}
+              </span>
+              {syncError && (
+                <button
+                  type="button"
+                  className="underline text-[#1890ff]"
+                  onClick={() => void refreshTickets()}
+                >
+                  Tentar de novo
+                </button>
+              )}
+            </div>
+          )}
+
           {activeTab === 'dashboard' && (
             <Dashboard
               tickets={tickets}
@@ -139,24 +331,39 @@ const AppContent: React.FC = () => {
           )}
 
           {activeTab === 'onboarding' && (
-            <OnboardingForm
-              onSubmitTicket={handleAddTicket}
-              addToast={addToast}
-              onCancel={() => setActiveTab('dashboard')}
-            />
+            <div className="bg-white border border-[#f0f0f0] p-4 sm:p-6">
+              <OnboardingForm
+                onSubmitTicket={handleAddTicket}
+                addToast={addToast}
+                onCancel={() => setActiveTab('dashboard')}
+              />
+            </div>
           )}
 
           {activeTab === 'offboarding' && (
-            <OffboardingForm
-              onSubmitTicket={handleAddTicket}
-              addToast={addToast}
-              onCancel={() => setActiveTab('dashboard')}
-            />
+            <div className="bg-white border border-[#f0f0f0] p-4 sm:p-6">
+              <OffboardingForm
+                onSubmitTicket={handleAddTicket}
+                addToast={addToast}
+                onCancel={() => setActiveTab('dashboard')}
+              />
+            </div>
           )}
+
+          {activeTab !== 'dashboard' &&
+            activeTab !== 'onboarding' &&
+            activeTab !== 'offboarding' && (
+              <AdminRouter
+                page={activeTab}
+                addToast={addToast}
+                tickets={tickets}
+                onOpenEntra={() => setIsSettingsOpen(true)}
+                onSelectTicket={(ticket) => setSelectedTicket(ticket)}
+              />
+            )}
         </main>
       </div>
 
-      {/* Modals */}
       {selectedTicket && (
         <TicketDetailModal
           ticket={selectedTicket}
@@ -167,15 +374,12 @@ const AppContent: React.FC = () => {
         />
       )}
 
-      {printTicket && (
-        <PrintTermModal ticket={printTicket} onClose={() => setPrintTicket(null)} />
-      )}
+      {printTicket && <PrintTermModal ticket={printTicket} onClose={() => setPrintTicket(null)} />}
 
       {isSettingsOpen && (
         <MsalSettingsModal onClose={() => setIsSettingsOpen(false)} addToast={addToast} />
       )}
 
-      {/* Toast Notifications */}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
@@ -184,7 +388,11 @@ const AppContent: React.FC = () => {
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <CatalogProvider>
+        <WorkflowMailProvider>
+          <AppContent />
+        </WorkflowMailProvider>
+      </CatalogProvider>
     </AuthProvider>
   );
 }

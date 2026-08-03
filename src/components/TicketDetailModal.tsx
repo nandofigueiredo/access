@@ -1,6 +1,3 @@
-import React, { useState } from 'react';
-import { Ticket, TicketStatus, ToastMessage } from '../types';
-import { formatDateToBR, formatDateTimeToBR, evaluateOnboardingSLA } from '../utils/formatters';
 import {
   X,
   UserPlus,
@@ -14,8 +11,14 @@ import {
   Laptop,
   Server,
   AlertTriangle,
-  Save
+  Save,
+  GitBranch,
 } from 'lucide-react';
+import { WorkflowPanel } from './WorkflowPanel';
+import { createInitialWorkflow } from '../services/workflowEngine';
+import React, { useEffect, useState } from 'react';
+import { Ticket, TicketStatus, ToastMessage } from '../types';
+import { formatDateToBR, formatDateTimeToBR, evaluateOnboardingSLA } from '../utils/formatters';
 
 interface TicketDetailModalProps {
   ticket: Ticket;
@@ -33,6 +36,17 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
   onPrintTerm,
 }) => {
   const isOnboarding = ticket.type === 'onboarding';
+  const [activePanel, setActivePanel] = useState<'workflow' | 'dados' | 'checklist'>('workflow');
+
+  useEffect(() => {
+    if (!ticket.workflow) {
+      onUpdateTicket({
+        ...ticket,
+        workflow: createInitialWorkflow(ticket.createdBy),
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticket.id]);
 
   // Local state for IT Checklist
   const [itChecklist, setItChecklist] = useState<any>(
@@ -84,7 +98,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs overflow-y-auto">
-      <div className="bg-white border border-slate-200 rounded-2xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden my-auto">
+      <div className="bg-white border border-slate-200 rounded-2xl max-w-4xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden my-auto">
         {/* Modal Header */}
         <div className="p-6 border-b border-slate-200 flex items-center justify-between bg-slate-50 shrink-0">
           <div className="flex items-center gap-3">
@@ -120,8 +134,39 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
           </button>
         </div>
 
+        {/* Tabs */}
+        <div className="flex border-b border-slate-200 bg-white px-4 gap-1 shrink-0">
+          {(
+            [
+              { id: 'workflow' as const, label: 'Workflow multiárea', icon: <GitBranch className="w-3.5 h-3.5" /> },
+              { id: 'dados' as const, label: 'Dados da solicitação', icon: <FileText className="w-3.5 h-3.5" /> },
+              { id: 'checklist' as const, label: 'Checklist TI', icon: <CheckSquare className="w-3.5 h-3.5" /> },
+            ]
+          ).map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setActivePanel(t.id)}
+              className={`inline-flex items-center gap-1.5 px-3 py-2.5 text-[12px] font-semibold border-b-2 -mb-px transition ${
+                activePanel === t.id
+                  ? 'border-[#1890ff] text-[#1890ff]'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              {t.icon}
+              {t.label}
+            </button>
+          ))}
+        </div>
+
         {/* Modal Body Scrollable */}
         <div className="p-6 overflow-y-auto space-y-6 text-xs text-slate-700">
+          {activePanel === 'workflow' && (
+            <WorkflowPanel ticket={ticket} onUpdateTicket={onUpdateTicket} addToast={addToast} />
+          )}
+
+          {activePanel === 'dados' && (
+            <>
           {/* Quick Status Bar */}
           <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl bg-slate-50 border border-slate-200">
             <div>
@@ -151,6 +196,26 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
                 }`}
               >
                 Em Andamento
+              </button>
+              <button
+                onClick={() => setStatus('Aguardando N3')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
+                  status === 'Aguardando N3'
+                    ? 'bg-violet-100 text-violet-900 border-violet-300'
+                    : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Aguardando N3
+              </button>
+              <button
+                onClick={() => setStatus('Pronta p/ Fechamento')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
+                  status === 'Pronta p/ Fechamento'
+                    ? 'bg-cyan-100 text-cyan-900 border-cyan-300'
+                    : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Pronta p/ Fechamento
               </button>
               <button
                 onClick={() => setStatus('Concluído')}
@@ -342,7 +407,11 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
               </div>
             </>
           )}
+            </>
+          )}
 
+          {activePanel === 'checklist' && (
+            <>
           {/* INTERACTIVE IT CHECKLIST */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
             <h4 className="font-bold text-slate-900 text-xs flex items-center gap-2 border-b border-slate-200 pb-2">
@@ -480,6 +549,8 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-900 placeholder-slate-400 focus:bg-white focus:border-blue-500 focus:outline-none transition"
             />
           </div>
+            </>
+          )}
         </div>
 
         {/* Modal Footer Actions */}

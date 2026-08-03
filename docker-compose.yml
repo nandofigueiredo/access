@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: portal_ti_postgres
+    environment:
+      POSTGRES_USER: portal_ti
+      POSTGRES_PASSWORD: portal_ti
+      POSTGRES_DB: portal_ti
+    ports:
+      - "5432:5432"
+    volumes:
+      - portal_ti_pgdata:/var/lib/postgresql/data
+      - ./backend/sql/001_ddl.sql:/docker-entrypoint-initdb.d/001_ddl.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U portal_ti -d portal_ti"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: portal_ti_api
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://portal_ti:portal_ti@db:5432/portal_ti
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  portal_ti_pgdata:

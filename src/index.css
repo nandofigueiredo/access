@@ -1,1 +1,79 @@
 @import "tailwindcss";
+
+@theme {
+  --color-diroma-navy: #001529;
+  --color-diroma-navy-light: #002140;
+  --color-diroma-blue: #002d5b;
+  --color-diroma-accent: #1890ff;
+  --color-diroma-bg: #f0f2f5;
+  --color-stat-yellow: #fadb14;
+  --color-stat-green: #52c41a;
+  --color-stat-orange: #fa8c16;
+  --color-stat-cyan: #13c2c2;
+  --color-stat-blue: #1890ff;
+  --font-sans: "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--color-diroma-bg);
+  color: #1f1f1f;
+}
+
+/* diRoma script-style brand */
+.brand-diroma {
+  font-family: "Segoe Script", "Brush Script MT", "Segoe UI", cursive;
+  font-weight: 700;
+  color: #002d5b;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.brand-diroma-sub {
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #002d5b;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+}
+
+.glpi-stat {
+  color: #fff;
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0.75rem 1rem;
+  border-radius: 2px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.glpi-table th {
+  background: #fafafa;
+  border-bottom: 1px solid #f0f0f0;
+  font-weight: 600;
+  color: #595959;
+  white-space: nowrap;
+}
+
+.glpi-table td {
+  border-bottom: 1px solid #f0f0f0;
+  vertical-align: middle;
+}
+
+.glpi-table tr:hover td {
+  background: #e6f7ff;
+}
+
+/* Logo SVG branca → navy diRoma (#002d5b) em fundos claros */
+.diroma-logo-navy {
+  filter: brightness(0) saturate(100%) invert(12%) sepia(60%) saturate(2500%) hue-rotate(195deg) brightness(90%) contrast(105%);
+}
