@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../auth/AuthContext';
 import { DiRomaLogo } from './DiRomaLogo';
-import { Settings2, Shield, CheckCircle2 } from 'lucide-react';
-import { ACCESS_PROFILES, AccessRole, getProfile } from '../auth/roles';
-import { isDemoLoginEnabled } from '../auth/msalConfig';
+import { Settings2 } from 'lucide-react';
 
 interface LoginScreenProps {
   onOpenSettings: () => void;
@@ -12,12 +10,9 @@ interface LoginScreenProps {
 const FUNDO_SRC = '/img/fundo.jpg';
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenSettings }) => {
-  const { loginWithMicrosoft, loginAsProfile, secureContext } = useAuth();
-  const [selectedRole, setSelectedRole] = useState<AccessRole>('ti');
+  const { loginWithMicrosoft, secureContext } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const demoOk = isDemoLoginEnabled();
-  const selected = getProfile(selectedRole);
 
   const handleMicrosoftLogin = async () => {
     setIsLoading(true);
@@ -31,21 +26,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenSettings }) => {
     }
   };
 
-  const handleProfileLogin = async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      await loginAsProfile(selectedRole);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Não foi possível entrar com este perfil.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   return (
     <div className="min-h-screen flex bg-white">
-      <section className="w-full lg:w-[46%] xl:w-[42%] flex flex-col justify-between px-6 sm:px-10 py-6 relative z-10 bg-white overflow-y-auto">
+      {/* Left — Auth panel */}
+      <section className="w-full lg:w-[38%] xl:w-[34%] flex flex-col justify-between px-8 sm:px-12 py-8 relative z-10 bg-white">
         <div className="flex justify-end">
           <button
             type="button"
@@ -57,108 +41,34 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenSettings }) => {
           </button>
         </div>
 
-        <div className="flex-1 flex flex-col justify-center max-w-xl mx-auto w-full py-4">
-          <div className="flex justify-center mb-6">
-            <DiRomaLogo sizeClass="h-16 sm:h-20" />
+        <div className="flex-1 flex flex-col justify-center max-w-md mx-auto w-full py-6">
+          <div className="flex justify-center mb-8">
+            <DiRomaLogo sizeClass="h-20 sm:h-24" />
           </div>
 
-          <div className="text-center mb-6">
-            <h1 className="text-xl sm:text-2xl font-bold text-[#002d5b] leading-tight">
+          <div className="text-center">
+            <h1 className="text-2xl sm:text-[1.7rem] font-bold text-[#002d5b] leading-tight">
               Portal de Onboarding &amp; Offboarding
             </h1>
-            <p className="mt-2 text-[13px] text-slate-500 leading-relaxed">
-              Escolha o perfil de acesso. Admin é exclusivo da equipe N3; demais cargos entram
-              apenas nas funções do seu papel.
+            <p className="mt-4 text-sm text-slate-500 leading-relaxed">
+              Quando um colaborador é contratado, o RH registra o onboarding com a data de início
+              e a solicitação segue para o Service Desk provisionar acessos e equipamentos.
+              Em caso de desligamento, o RH abre o offboarding para a TI revogar acessos e recolher ativos.
             </p>
           </div>
 
-          <div className="space-y-2.5 mb-6">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-              <Shield className="w-3.5 h-3.5" />
-              Perfis de acesso
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {ACCESS_PROFILES.map((profile) => {
-                const active = selectedRole === profile.role;
-                return (
-                  <button
-                    key={profile.role}
-                    type="button"
-                    onClick={() => setSelectedRole(profile.role)}
-                    className={`text-left rounded-md border px-3 py-2.5 transition ${
-                      active ? 'shadow-sm' : 'border-slate-200 hover:border-slate-300 bg-white'
-                    }`}
-                    style={
-                      active
-                        ? {
-                            borderColor: profile.color,
-                            backgroundColor: `${profile.color}14`,
-                            boxShadow: `0 0 0 2px ${profile.color}55`,
-                          }
-                        : undefined
-                    }
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[13px] font-bold text-slate-800">{profile.title}</span>
-                          {profile.featured && (
-                            <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded text-white bg-[#722ed1]">
-                              N3
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[10px] font-semibold mt-0.5" style={{ color: profile.color }}>
-                          {profile.badge}
-                        </div>
-                      </div>
-                      {active && <CheckCircle2 className="w-4 h-4 shrink-0" style={{ color: profile.color }} />}
-                    </div>
-                    <p className="mt-1.5 text-[11px] text-slate-500 leading-snug line-clamp-2">
-                      {profile.description}
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div
-              className="rounded-md border px-3 py-2.5 text-[12px] text-slate-600"
-              style={{ borderColor: `${selected.color}55`, backgroundColor: `${selected.color}0d` }}
-            >
-              <div className="font-semibold text-slate-800 mb-1">Acessos de {selected.title}</div>
-              <ul className="space-y-0.5">
-                {selected.accessSummary.map((item) => (
-                  <li key={item} className="flex items-start gap-1.5">
-                    <span className="mt-1 w-1 h-1 rounded-full shrink-0" style={{ background: selected.color }} />
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-
-          <div className="space-y-3">
+          <div className="mt-10 space-y-4">
             {!secureContext && (
               <div className="text-[12px] text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2.5 leading-relaxed">
-                <strong>HTTPS obrigatório para Microsoft.</strong> Use{' '}
-                <strong>https://access.diroma.com.br</strong> ou entre pelo perfil em modo demo.
+                <strong>HTTPS obrigatório para Microsoft.</strong> Você abriu via{' '}
+                <code className="text-[11px]">http://IP</code>, que não é contexto seguro.
+                Acesse <strong>https://access.diroma.com.br</strong> (nginx com SSL).
               </div>
             )}
 
-            {demoOk && (
-              <button
-                type="button"
-                onClick={handleProfileLogin}
-                disabled={isLoading}
-                className="w-full flex items-center justify-center gap-2 text-white font-semibold py-3 px-4 rounded-md transition active:scale-[0.99] disabled:opacity-60"
-                style={{ backgroundColor: selected.color }}
-              >
-                <span className="text-sm">
-                  {isLoading ? 'Entrando…' : `Entrar como ${selected.title}`}
-                </span>
-              </button>
-            )}
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 text-center">
+              Acesso exclusivo via Microsoft Entra ID
+            </p>
 
             <button
               id="btn-login-microsoft"
@@ -174,7 +84,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenSettings }) => {
                 <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
               </svg>
               <span className="text-sm">
-                {isLoading ? 'Autenticando…' : 'Acessar com Microsoft'}
+                {isLoading ? 'Autenticando...' : 'Acessar com Microsoft'}
               </span>
             </button>
 
@@ -185,17 +95,22 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenSettings }) => {
             )}
 
             <p className="text-[11px] text-slate-400 text-center leading-relaxed">
-              Contas <strong className="text-slate-600">@diroma.com.br</strong>. O perfil Microsoft
-              prevalece no SSO; Admin permanece restrito à equipe N3.
+              Somente contas <strong className="text-slate-600">@diroma.com.br</strong> autorizadas.
             </p>
           </div>
         </div>
 
-        <footer className="text-[11px] text-slate-400 space-y-2 text-center pt-4">
+        <footer className="text-[11px] text-slate-400 space-y-2 text-center">
+          <div className="flex flex-wrap gap-3 justify-center">
+            <a href="#" className="hover:text-[#002d5b]">Privacidade</a>
+            <a href="#" className="hover:text-[#002d5b]">Termos de Uso</a>
+            <a href="#" className="hover:text-[#002d5b]">Contato</a>
+          </div>
           <p>diRoma.com.br — Todos os direitos reservados. {new Date().getFullYear()}</p>
         </footer>
       </section>
 
+      {/* Right — Hero com fundo.jpg oficial */}
       <section className="hidden lg:block flex-1 relative overflow-hidden bg-[#001529]">
         <img
           src={FUNDO_SRC}
@@ -204,19 +119,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenSettings }) => {
         />
         <div className="absolute inset-0 bg-gradient-to-t from-[#001529]/75 via-[#001529]/20 to-[#001529]/35" />
         <div className="absolute top-10 left-10 right-10 text-white max-w-xl">
-          <p className="text-lg font-semibold drop-shadow">Níveis de acesso do portal</p>
-          <p className="mt-2 text-sm text-white/90 drop-shadow">
-            RH solicita · Service Desk executa · N3 integra · Admin só para equipe N3.
+          <p className="text-lg font-semibold drop-shadow">
+            Portal TI — Onboarding &amp; Offboarding
           </p>
-          <ul className="mt-6 space-y-2 text-sm text-white/90">
-            {ACCESS_PROFILES.map((p) => (
-              <li key={p.role} className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full shrink-0" style={{ background: p.color }} />
-                <strong>{p.title}</strong>
-                <span className="text-white/70">— {p.badge}</span>
-              </li>
-            ))}
-          </ul>
+          <p className="mt-2 text-sm text-white/90 drop-shadow">
+            RH solicita · Service Desk executa · Acessos e ativos sob controle.
+          </p>
         </div>
       </section>
     </div>
