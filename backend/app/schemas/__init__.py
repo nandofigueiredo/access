@@ -264,5 +264,14 @@ class SettingsUpdate(BaseModel):
     value: dict[str, Any]
 
 
+class SmtpTestOut(BaseModel):
+    ok: bool
+    status: str
+    to: list[str] = Field(default_factory=list)
+    subject: str | None = None
+    error: str | None = None
+    detail: str
+
+
 class MessageOut(BaseModel):
     detail: str

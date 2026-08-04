@@ -4,6 +4,7 @@ import { useWorkflowMail } from '../../store/WorkflowMailContext';
 import { SmtpConfig } from '../../types/workflow';
 import { ToastMessage } from '../../types';
 import { formatDateTimeToBR } from '../../utils/formatters';
+import { api, USE_API } from '../../api/client';
 
 interface Props {
   addToast: (t: Omit<ToastMessage, 'id'>) => void;
@@ -13,6 +14,7 @@ export const SmtpConfigPage: React.FC<Props> = ({ addToast }) => {
   const { smtp, saveSmtp, sendMail, emailLog } = useWorkflowMail();
   const [form, setForm] = useState<SmtpConfig>(smtp);
   const [showPass, setShowPass] = useState(false);
+  const [testing, setTesting] = useState(false);
 
   React.useEffect(() => {
     setForm({ ...smtp, glpiInbox: smtp.glpiInbox || 'glpi@diroma.com.br', glpiEnabled: smtp.glpiEnabled !== false });
@@ -26,21 +28,47 @@ export const SmtpConfigPage: React.FC<Props> = ({ addToast }) => {
     addToast({ type: 'success', title: 'SMTP salvo', message: 'Configuração do workflow de e-mail atualizada.' });
   };
 
-  const handleTest = () => {
+  const handleTest = async () => {
     saveSmtp(form);
-    const entry = sendMail({
-      to: [form.serviceDeskInbox || form.fromEmail],
-      subject: '[Teste] Portal TI — SMTP Workflow',
-      body: `Teste de envio em ${new Date().toLocaleString('pt-BR')}.\nModo: ${form.testMode ? 'simulado' : 'produção'}.`,
-      template: 'smtp_test',
-    });
-    addToast({
-      type: 'info',
-      title: 'E-mail de teste',
-      message: form.testMode || !form.enabled
-        ? `Simulado para ${entry.to.join(', ')} (veja o log abaixo).`
-        : `Enfileirado para ${entry.to.join(', ')}.`,
-    });
+    setTesting(true);
+    try {
+      if (USE_API) {
+        // Garante que o banco tem a config antes do teste real
+        await api.putSetting('smtp', form as unknown as Record<string, unknown>);
+        const result = await api.testSmtp();
+        sendMail({
+          to: result.to?.length ? result.to : [form.serviceDeskInbox || form.fromEmail],
+          subject: result.subject || '[Teste] Portal TI — SMTP Workflow',
+          body: result.detail,
+          template: 'smtp_test',
+        });
+        addToast({
+          type: result.ok ? (result.status === 'sent_simulated' ? 'info' : 'success') : 'error',
+          title: result.ok ? 'E-mail de teste' : 'Falha no teste SMTP',
+          message: result.detail,
+        });
+        return;
+      }
+      const entry = sendMail({
+        to: [form.serviceDeskInbox || form.fromEmail],
+        subject: '[Teste] Portal TI — SMTP Workflow',
+        body: `Teste local (sem API) em ${new Date().toLocaleString('pt-BR')}.`,
+        template: 'smtp_test',
+      });
+      addToast({
+        type: 'info',
+        title: 'E-mail de teste',
+        message: `Simulado para ${entry.to.join(', ')} (API offline).`,
+      });
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Falha no teste SMTP',
+        message: err instanceof Error ? err.message : 'Não foi possível testar o SMTP.',
+      });
+    } finally {
+      setTesting(false);
+    }
   };
 
   return (
@@ -167,8 +195,13 @@ export const SmtpConfigPage: React.FC<Props> = ({ addToast }) => {
             <button type="button" onClick={handleSave} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white bg-[#002d5b] hover:bg-[#001529]">
               <ShieldCheck className="w-4 h-4" /> Salvar SMTP
             </button>
-            <button type="button" onClick={handleTest} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-[#002d5b] bg-sky-50 border border-sky-200 hover:bg-sky-100">
-              <Send className="w-4 h-4" /> Enviar teste
+            <button
+              type="button"
+              onClick={() => void handleTest()}
+              disabled={testing}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-[#002d5b] bg-sky-50 border border-sky-200 hover:bg-sky-100 disabled:opacity-60"
+            >
+              <Send className="w-4 h-4" /> {testing ? 'Testando…' : 'Enviar teste'}
             </button>
           </div>
         </div>

@@ -12,12 +12,60 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.models.settings import AppSetting
 from app.models.user import User
-from app.schemas import SettingsOut, SettingsUpdate
+from app.schemas import SettingsOut, SettingsUpdate, SmtpTestOut
 from app.services.audit import write_audit_log
+from app.services.email_smtp import send_smtp_email
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
 
 ALLOWED_KEYS = {"catalog", "smtp"}
+
+
+@router.post("/smtp/test", response_model=SmtpTestOut)
+async def test_smtp(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SmtpTestOut:
+    """Envia e-mail de teste usando a config SMTP gravada em app_settings."""
+    if current_user.role not in {"admin", "ti"}:
+        raise HTTPException(status_code=403, detail="Sem permissão para testar SMTP.")
+
+    result = await db.execute(select(AppSetting).where(AppSetting.key == "smtp"))
+    row = result.scalar_one_or_none()
+    cfg = row.value if row and isinstance(row.value, dict) else {}
+    to_addr = str(cfg.get("serviceDeskInbox") or cfg.get("fromEmail") or current_user.email or "").strip()
+    if not to_addr or "@" not in to_addr:
+        raise HTTPException(status_code=422, detail="Defina Service Desk ou e-mail remetente antes do teste.")
+
+    send_result = await send_smtp_email(
+        db,
+        to=[to_addr],
+        subject="[Teste] Portal TI — SMTP Workflow",
+        body=(
+            f"Teste de envio SMTP do Portal TI.\n"
+            f"Usuário: {current_user.email}\n"
+            f"Horário: {__import__('datetime').datetime.now().isoformat()}\n"
+            f"Modo teste na config: {bool(cfg.get('testMode', True))}\n"
+            f"SMTP enabled: {bool(cfg.get('enabled'))}\n"
+        ),
+    )
+    status = str(send_result.get("status") or "failed")
+    ok = bool(send_result.get("ok"))
+    detail = (
+        f"Simulado para {to_addr} (desmarque Modo teste + habilite SMTP para envio real)."
+        if status == "sent_simulated"
+        else f"Enviado para {to_addr}."
+        if ok
+        else str(send_result.get("error") or "Falha no envio SMTP.")
+    )
+    return SmtpTestOut(
+        ok=ok,
+        status=status,
+        to=list(send_result.get("to") or [to_addr]),
+        subject=str(send_result.get("subject") or ""),
+        error=None if ok else str(send_result.get("error") or detail),
+        detail=detail,
+    )
 
 
 def _user_key(user: dict[str, Any]) -> str:

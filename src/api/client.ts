@@ -217,6 +217,16 @@ export const api = {
       body: JSON.stringify({ value }),
     }),
 
+  testSmtp: () =>
+    apiFetch<{
+      ok: boolean;
+      status: string;
+      to: string[];
+      subject?: string;
+      error?: string | null;
+      detail: string;
+    }>('/settings/smtp/test', { method: 'POST' }),
+
   /** Verifica se o e-mail está liberado em Usuários & Perfis (não cria sessão sozinho). */
   getAccessStatus: async (portalEmail?: string) => {
     const token = await tokenProvider();
