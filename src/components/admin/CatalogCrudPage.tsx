@@ -9,7 +9,7 @@ interface CatalogCrudPageProps {
   subtitle: string;
   items: CatalogItem[];
   onSave: (item: CatalogItem) => void | Promise<void>;
-  onDelete: (id: string) => void;
+  onDelete: (id: string) => void | Promise<void>;
   addToast: (toast: Omit<ToastMessage, 'id'>) => void;
   showDescription?: boolean;
   /** Cadastro de operadores com seleção de perfil de acesso */
@@ -186,8 +186,21 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
     }
   };
 
-  const toggleActive = (item: CatalogItem) => {
-    onSave({ ...item, active: !item.active });
+  const toggleActive = async (item: CatalogItem) => {
+    try {
+      await onSave({ ...item, active: !item.active });
+      addToast({
+        type: 'success',
+        title: item.active ? 'Desativado' : 'Ativado',
+        message: `"${item.name}" atualizado no banco.`,
+      });
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Falha ao atualizar',
+        message: err instanceof Error ? err.message : 'Não foi possível gravar.',
+      });
+    }
   };
 
   const selectedProfile = getProfile(role);
@@ -370,10 +383,19 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
                           <button
                             type="button"
                             onClick={() => {
-                              if (confirm(`Excluir "${item.name}"?`)) {
-                                onDelete(item.id);
-                                addToast({ type: 'warning', title: 'Excluído', message: item.name });
-                              }
+                              void (async () => {
+                                if (!confirm(`Excluir "${item.name}"?`)) return;
+                                try {
+                                  await onDelete(item.id);
+                                  addToast({ type: 'warning', title: 'Excluído', message: item.name });
+                                } catch (err) {
+                                  addToast({
+                                    type: 'error',
+                                    title: 'Falha ao excluir',
+                                    message: err instanceof Error ? err.message : 'Não foi possível gravar.',
+                                  });
+                                }
+                              })();
                             }}
                             className="p-1.5 text-slate-500 hover:text-rose-600"
                             title="Excluir"

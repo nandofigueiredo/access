@@ -43,8 +43,18 @@ export const SlaConfigPage: React.FC<PageProps> = ({ addToast }) => {
       <button
         type="button"
         onClick={() => {
-          updateSla({ onboardingMinBusinessDays: days, offboardingZeroDay: zeroDay, defaultQueue: queue });
-          addToast({ type: 'success', title: 'SLA atualizado', message: 'Parâmetros salvos.' });
+          void (async () => {
+            try {
+              await updateSla({ onboardingMinBusinessDays: days, offboardingZeroDay: zeroDay, defaultQueue: queue });
+              addToast({ type: 'success', title: 'SLA atualizado', message: 'Parâmetros salvos no banco.' });
+            } catch (err) {
+              addToast({
+                type: 'error',
+                title: 'Falha ao salvar SLA',
+                message: err instanceof Error ? err.message : 'Não foi possível gravar.',
+              });
+            }
+          })();
         }}
         className="px-3 py-1.5 text-[12px] font-semibold text-white bg-[#1890ff]"
       >
@@ -259,13 +269,23 @@ export const TemplatesPage: React.FC<PageProps & { kind: 'email' | 'term' }> = (
           type="button"
           className="ml-2 text-[#1890ff] font-semibold"
           onClick={() => {
-            upsertItem(key, {
-              id: `${key}-${Date.now()}`,
-              name: kind === 'email' ? 'Novo template de e-mail' : 'Novo termo',
-              active: true,
-              sortOrder: items.length + 1,
-            });
-            addToast({ type: 'success', title: 'Template criado', message: 'Edite o nome na listagem de catálogo.' });
+            void (async () => {
+              try {
+                await upsertItem(key, {
+                  id: `${key}-${Date.now()}`,
+                  name: kind === 'email' ? 'Novo template de e-mail' : 'Novo termo',
+                  active: true,
+                  sortOrder: items.length + 1,
+                });
+                addToast({ type: 'success', title: 'Template criado', message: 'Gravado no banco.' });
+              } catch (err) {
+                addToast({
+                  type: 'error',
+                  title: 'Falha ao criar',
+                  message: err instanceof Error ? err.message : 'Não foi possível gravar.',
+                });
+              }
+            })();
           }}
         >
           + Adicionar
@@ -278,7 +298,26 @@ export const TemplatesPage: React.FC<PageProps & { kind: 'email' | 'term' }> = (
               <div className="font-semibold">{t.name}</div>
               <div className="text-[11px] text-slate-400">{t.description || '—'}</div>
             </div>
-            <button type="button" className="text-rose-600 text-[12px]" onClick={() => removeItem(key, t.id)}>Excluir</button>
+            <button
+              type="button"
+              className="text-rose-600 text-[12px]"
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await removeItem(key, t.id);
+                    addToast({ type: 'warning', title: 'Excluído', message: t.name });
+                  } catch (err) {
+                    addToast({
+                      type: 'error',
+                      title: 'Falha ao excluir',
+                      message: err instanceof Error ? err.message : 'Não foi possível gravar.',
+                    });
+                  }
+                })();
+              }}
+            >
+              Excluir
+            </button>
           </li>
         ))}
       </ul>
@@ -297,10 +336,19 @@ export const GeneralConfigPage: React.FC<PageProps> = ({ addToast }) => {
       <button
         type="button"
         onClick={() => {
-          if (confirm('Restaurar todos os cadastros para o padrão de fábrica?')) {
-            resetDefaults();
-            addToast({ type: 'warning', title: 'Catálogo restaurado', message: 'Valores padrão reaplicados.' });
-          }
+          void (async () => {
+            if (!confirm('Restaurar todos os cadastros para o padrão de fábrica?')) return;
+            try {
+              await resetDefaults();
+              addToast({ type: 'warning', title: 'Catálogo restaurado', message: 'Valores padrão reaplicados no banco.' });
+            } catch (err) {
+              addToast({
+                type: 'error',
+                title: 'Falha ao restaurar',
+                message: err instanceof Error ? err.message : 'Não foi possível gravar.',
+              });
+            }
+          })();
         }}
         className="inline-flex items-center gap-2 px-3 py-2 text-[12px] font-semibold border border-slate-200 hover:bg-slate-50"
       >

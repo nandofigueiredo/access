@@ -23,6 +23,61 @@ router = APIRouter(prefix="/settings", tags=["Settings"])
 ALLOWED_KEYS = {"catalog", "smtp"}
 _BR_TZ = ZoneInfo("America/Sao_Paulo")
 
+CATALOG_LIST_KEYS = (
+    "departments",
+    "positions",
+    "workModes",
+    "hardwareProfiles",
+    "peripherals",
+    "basePlatforms",
+    "specificSystems",
+    "units",
+    "managers",
+    "ticketStatuses",
+    "returnMethods",
+    "assetTypes",
+    "onboardingChecklist",
+    "offboardingChecklist",
+    "users",
+    "serviceQueues",
+    "emailTemplates",
+    "termTemplates",
+    "allowedDomains",
+    "formFields",
+)
+
+
+def _merge_items_by_id(
+    server_items: list[Any],
+    incoming_items: list[Any],
+    delete_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Une itens de catálogo por id. Incoming vence; delete_ids remove."""
+    merged: dict[str, dict[str, Any]] = {}
+    for raw in server_items:
+        if not isinstance(raw, dict):
+            continue
+        sid = str(raw.get("id") or "").strip()
+        if not sid or (delete_ids and sid in delete_ids):
+            continue
+        merged[sid] = copy.deepcopy(raw)
+    for raw in incoming_items:
+        if not isinstance(raw, dict):
+            continue
+        sid = str(raw.get("id") or "").strip()
+        if not sid:
+            continue
+        if delete_ids and sid in delete_ids:
+            merged.pop(sid, None)
+            continue
+        incoming = copy.deepcopy(raw)
+        existing = merged.get(sid)
+        merged[sid] = {**existing, **incoming} if existing else incoming
+    if delete_ids:
+        for did in delete_ids:
+            merged.pop(did, None)
+    return list(merged.values())
+
 
 @router.post("/smtp/test", response_model=SmtpTestOut)
 async def test_smtp(
@@ -193,21 +248,35 @@ async def put_setting(
 
     value: dict[str, Any] = copy.deepcopy(payload.value) if isinstance(payload.value, dict) else {}
 
-    # Catálogo: une usuários com o banco (não apaga por race/stale client)
+    # Catálogo: une TODAS as listas por id (não só users) — evita race apagar gestores/unidades
     if key == "catalog":
         server_val = copy.deepcopy(row.value) if row and isinstance(row.value, dict) else {}
-        server_users = server_val.get("users") if isinstance(server_val.get("users"), list) else []
-        incoming_users = value.get("users") if isinstance(value.get("users"), list) else []
-        raw_deletes = value.pop("userDeleteIds", None)
-        delete_ids = {str(x) for x in raw_deletes} if isinstance(raw_deletes, list) else set()
-        value["users"] = _merge_catalog_users(server_users, incoming_users, delete_ids)
+        raw_user_deletes = value.pop("userDeleteIds", None)
+        user_delete_ids = {str(x) for x in raw_user_deletes} if isinstance(raw_user_deletes, list) else set()
+        raw_item_deletes = value.pop("itemDeleteIds", None)
+        item_deletes: dict[str, set[str]] = {}
+        if isinstance(raw_item_deletes, dict):
+            for list_key, ids in raw_item_deletes.items():
+                if isinstance(ids, list):
+                    item_deletes[str(list_key)] = {str(x) for x in ids}
 
-        remote_ts = str(server_val.get("updatedAt") or "")
-        incoming_ts = str(value.get("updatedAt") or "")
-        if remote_ts and incoming_ts and incoming_ts < remote_ts and not delete_ids:
-            # Cliente antigo: preserva campos do servidor e users já mergeados
-            merged_users = value["users"]
-            value = {**server_val, **value, "users": merged_users, "updatedAt": remote_ts}
+        for list_key in CATALOG_LIST_KEYS:
+            server_list = server_val.get(list_key) if isinstance(server_val.get(list_key), list) else []
+            incoming_list = value.get(list_key) if isinstance(value.get(list_key), list) else []
+            if list_key == "users":
+                value["users"] = _merge_catalog_users(server_list, incoming_list, user_delete_ids)
+            else:
+                deletes = item_deletes.get(list_key, set())
+                value[list_key] = _merge_items_by_id(server_list, incoming_list, deletes)
+
+        # sla: incoming se presente, senão servidor
+        if not isinstance(value.get("sla"), dict) and isinstance(server_val.get("sla"), dict):
+            value["sla"] = copy.deepcopy(server_val["sla"])
+
+        # Campos escalares do servidor que o cliente omitiu
+        for meta_key in ("updatedAt",):
+            if meta_key not in value and meta_key in server_val:
+                value[meta_key] = server_val[meta_key]
 
     if row:
         row.value = value

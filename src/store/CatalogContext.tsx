@@ -5,8 +5,37 @@ import { api, USE_API } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 
 const STORAGE_KEY = 'portal_ti_system_catalog_v1';
-const POLL_MS = 15000;
+/** Poll só para detectar mudanças de outro admin — não sobrescreve se o local for mais novo. */
+const POLL_MS = 60000;
 export const CATALOG_UPDATED_EVENT = 'portal-catalog-updated';
+
+const LIST_KEYS: Exclude<CatalogKey, never>[] = [
+  'departments',
+  'positions',
+  'workModes',
+  'hardwareProfiles',
+  'peripherals',
+  'basePlatforms',
+  'specificSystems',
+  'units',
+  'managers',
+  'ticketStatuses',
+  'returnMethods',
+  'assetTypes',
+  'onboardingChecklist',
+  'offboardingChecklist',
+  'users',
+  'serviceQueues',
+  'emailTemplates',
+  'termTemplates',
+  'allowedDomains',
+  'formFields',
+];
+
+type CatalogWithDeletes = SystemCatalog & {
+  userDeleteIds?: string[];
+  itemDeleteIds?: Partial<Record<CatalogKey, string[]>>;
+};
 
 function catalogTimestamp(c: SystemCatalog | null | undefined): number {
   const raw = c?.updatedAt;
@@ -57,7 +86,6 @@ function userIdentityKey(u: CatalogItem): string {
 }
 
 function richerUser(existing: CatalogItem, incoming: CatalogItem): CatalogItem {
-  /** Incoming vence em role/e-mail; completa buracos com o existente. */
   const aMeta = (existing.meta || {}) as Record<string, string | boolean | number | null>;
   const bMeta = (incoming.meta || {}) as Record<string, string | boolean | number | null>;
 
@@ -98,12 +126,9 @@ function richerUser(existing: CatalogItem, incoming: CatalogItem): CatalogItem {
   };
 }
 
-/** União de usuários por e-mail/id — nunca descarta cadastro de um dos lados. */
 function mergeCatalogUsers(local: CatalogItem[], remote: CatalogItem[]): CatalogItem[] {
   const map = new Map<string, CatalogItem>();
-  for (const u of remote) {
-    map.set(userIdentityKey(u), u);
-  }
+  for (const u of remote) map.set(userIdentityKey(u), u);
   for (const u of local) {
     const key = userIdentityKey(u);
     const existing = map.get(key);
@@ -112,7 +137,69 @@ function mergeCatalogUsers(local: CatalogItem[], remote: CatalogItem[]): Catalog
   return Array.from(map.values());
 }
 
-/** Garante arrays em todas as chaves de lista (evita "X is not iterable"). */
+/** União por id — incoming vence no conflito; deleteIds removem. */
+function mergeItemsById<T extends { id: string }>(
+  remote: T[],
+  incoming: T[],
+  deleteIds?: Set<string>
+): T[] {
+  const map = new Map<string, T>();
+  for (const item of remote) {
+    if (!item?.id) continue;
+    if (deleteIds?.has(item.id)) continue;
+    map.set(item.id, item);
+  }
+  for (const item of incoming) {
+    if (!item?.id) continue;
+    if (deleteIds?.has(item.id)) {
+      map.delete(item.id);
+      continue;
+    }
+    const existing = map.get(item.id);
+    map.set(item.id, existing ? { ...existing, ...item } : item);
+  }
+  if (deleteIds) {
+    for (const id of deleteIds) map.delete(id);
+  }
+  return Array.from(map.values());
+}
+
+/** Une catálogos: listas por id; users por e-mail; sla do mais novo. */
+function mergeCatalogs(
+  remote: SystemCatalog,
+  incoming: SystemCatalog,
+  opts?: { userDeleteIds?: string[]; itemDeleteIds?: Partial<Record<CatalogKey, string[]>> }
+): SystemCatalog {
+  const out = normalizeCatalog({ ...remote, ...incoming });
+  for (const key of LIST_KEYS) {
+    if (key === 'users') {
+      out.users = mergeCatalogUsers(incoming.users || [], remote.users || []);
+      if (opts?.userDeleteIds?.length) {
+        const del = new Set(opts.userDeleteIds);
+        out.users = out.users.filter((u) => !del.has(u.id));
+      }
+      continue;
+    }
+    if (key === 'formFields') {
+      const del = new Set(opts?.itemDeleteIds?.formFields || []);
+      out.formFields = mergeItemsById(
+        remote.formFields || [],
+        incoming.formFields || [],
+        del
+      );
+      continue;
+    }
+    const del = new Set(opts?.itemDeleteIds?.[key] || []);
+    const remoteList = (Array.isArray(remote[key]) ? remote[key] : []) as CatalogItem[];
+    const incomingList = (Array.isArray(incoming[key]) ? incoming[key] : []) as CatalogItem[];
+    (out as unknown as Record<string, unknown>)[key] = mergeItemsById(remoteList, incomingList, del);
+  }
+  const preferIncomingSla = catalogTimestamp(incoming) >= catalogTimestamp(remote);
+  out.sla = preferIncomingSla ? incoming.sla || remote.sla : remote.sla || incoming.sla;
+  out.updatedAt = new Date().toISOString();
+  return normalizeCatalog(out);
+}
+
 function normalizeCatalog(value: SystemCatalog): SystemCatalog {
   const base = createDefaultCatalog();
   const keys = Object.keys(base) as (keyof SystemCatalog)[];
@@ -126,7 +213,6 @@ function normalizeCatalog(value: SystemCatalog): SystemCatalog {
   }
   if (!out.sla || typeof out.sla !== 'object') out.sla = base.sla;
 
-  // Corrige cadastros legados: e-mail no campo Nome e meta.email vazio
   out.users = (out.users || []).map((u) => {
     const metaEmail = typeof u.meta?.email === 'string' ? u.meta.email.trim().toLowerCase() : '';
     const nameLooksEmail = u.name.includes('@');
@@ -150,7 +236,6 @@ function normalizeCatalog(value: SystemCatalog): SystemCatalog {
     return u;
   });
 
-  // Garante admin Luis no catálogo
   const luisEmail = 'luis.figueiredo@diroma.com.br';
   const hasLuis = out.users.some(
     (u) => String(u.meta?.email || '').toLowerCase() === luisEmail || u.name.toLowerCase().includes('luis.figueiredo')
@@ -187,12 +272,12 @@ interface CatalogContextValue {
   syncing: boolean;
   activeOptions: (key: Exclude<CatalogKey, 'formFields'>) => CatalogItem[];
   visibleFields: (form: 'onboarding' | 'offboarding') => FormFieldConfig[];
-  upsertItem: (key: Exclude<CatalogKey, 'formFields'>, item: CatalogItem) => void | Promise<void>;
-  removeItem: (key: Exclude<CatalogKey, 'formFields'>, id: string) => void;
-  upsertFormField: (field: FormFieldConfig) => void;
-  removeFormField: (id: string) => void;
-  updateSla: (sla: SlaSettings) => void;
-  resetDefaults: () => void;
+  upsertItem: (key: Exclude<CatalogKey, 'formFields'>, item: CatalogItem) => Promise<void>;
+  removeItem: (key: Exclude<CatalogKey, 'formFields'>, id: string) => Promise<void>;
+  upsertFormField: (field: FormFieldConfig) => Promise<void>;
+  removeFormField: (id: string) => Promise<void>;
+  updateSla: (sla: SlaSettings) => Promise<void>;
+  resetDefaults: () => Promise<void>;
 }
 
 const CatalogContext = createContext<CatalogContextValue | undefined>(undefined);
@@ -201,126 +286,130 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const { user } = useAuth();
   const [catalog, setCatalog] = useState<SystemCatalog>(() => loadLocalCatalog());
   const [syncing, setSyncing] = useState(false);
-  const saveTimer = useRef<number | null>(null);
+  const catalogRef = useRef(catalog);
+  const savingRef = useRef(false);
+  const loadedOnce = useRef(false);
 
-  const pushRemote = useCallback(async (next: SystemCatalog) => {
-    if (!USE_API || !user?.isAuthenticated) return false;
+  useEffect(() => {
+    catalogRef.current = catalog;
+  }, [catalog]);
+
+  const pushRemote = useCallback(async (next: CatalogWithDeletes) => {
+    if (!USE_API || !user?.isAuthenticated) return !USE_API;
+    savingRef.current = true;
     try {
-      const deleteIds = (next as SystemCatalog & { userDeleteIds?: string[] }).userDeleteIds;
-      // Antes de gravar, une com o que já está no banco para não apagar usuários
-      let toSave: SystemCatalog & { userDeleteIds?: string[] } = next;
+      const userDeleteIds = next.userDeleteIds;
+      const itemDeleteIds = next.itemDeleteIds;
+      let toSave: CatalogWithDeletes = next;
       try {
         const remote = await api.getSetting('catalog');
-        if (isValidCatalog(remote.value) && Array.isArray((remote.value as SystemCatalog).users)) {
-          const remoteCat = remote.value as SystemCatalog;
-          const mergedUsers = mergeCatalogUsers(next.users || [], remoteCat.users || []);
-          toSave = normalizeCatalog({
-            ...remoteCat,
-            ...next,
-            users: mergedUsers,
-            updatedAt: new Date().toISOString(),
+        if (isValidCatalog(remote.value)) {
+          toSave = mergeCatalogs(remote.value as SystemCatalog, next, {
+            userDeleteIds,
+            itemDeleteIds,
           });
         }
       } catch {
         // segue com next
       }
-      if (deleteIds?.length) {
-        toSave = { ...toSave, userDeleteIds: deleteIds };
-      }
-      const saved = await api.putSetting(
-        'catalog',
-        toSave as unknown as Record<string, unknown>
-      );
+      if (userDeleteIds?.length) toSave = { ...toSave, userDeleteIds };
+      if (itemDeleteIds) toSave = { ...toSave, itemDeleteIds };
+
+      const saved = await api.putSetting('catalog', toSave as unknown as Record<string, unknown>);
       const stored = normalizeCatalog((saved.value || toSave) as SystemCatalog);
       setCatalog(stored);
+      catalogRef.current = stored;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
       notifyCatalogUpdated();
       return true;
     } catch (err) {
       console.warn('Falha ao gravar catálogo no banco:', err);
       return false;
+    } finally {
+      window.setTimeout(() => {
+        savingRef.current = false;
+      }, 1000);
     }
   }, [user?.isAuthenticated]);
 
-  const persist = useCallback(
-    (next: SystemCatalog, opts?: { remote?: boolean; immediate?: boolean }) => {
-      const withTs = normalizeCatalog({ ...next, updatedAt: new Date().toISOString() });
+  const commit = useCallback(
+    async (build: (prev: SystemCatalog) => CatalogWithDeletes) => {
+      const prev = catalogRef.current;
+      const nextRaw = build(prev);
+      const { userDeleteIds, itemDeleteIds, ...rest } = nextRaw;
+      const withTs = normalizeCatalog({
+        ...(rest as SystemCatalog),
+        updatedAt: new Date().toISOString(),
+      });
+      const payload: CatalogWithDeletes = {
+        ...withTs,
+        ...(userDeleteIds?.length ? { userDeleteIds } : {}),
+        ...(itemDeleteIds ? { itemDeleteIds } : {}),
+      };
       setCatalog(withTs);
+      catalogRef.current = withTs;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(withTs));
       notifyCatalogUpdated();
-      if (opts?.remote === false) return;
-      if (saveTimer.current) window.clearTimeout(saveTimer.current);
-      if (opts?.immediate) {
-        void pushRemote(withTs);
-        return;
+
+      const ok = await pushRemote(payload);
+      if (!ok) {
+        throw new Error('Não foi possível gravar no banco. Tente novamente.');
       }
-      saveTimer.current = window.setTimeout(() => {
-        void pushRemote(withTs);
-      }, 400);
     },
     [pushRemote]
   );
 
   const pullRemote = useCallback(async () => {
     if (!USE_API || !user?.isAuthenticated) return;
+    if (savingRef.current) return;
     setSyncing(true);
     try {
       const remote = await api.getSetting('catalog');
       if (isValidCatalog(remote.value) && Object.keys(remote.value).length > 0) {
         const normalized = normalizeCatalog(remote.value as SystemCatalog);
-        setCatalog((local) => {
-          const mergedUsers = mergeCatalogUsers(local.users || [], normalized.users || []);
-          const merged = normalizeCatalog({
-            ...normalized,
-            users: mergedUsers,
-            updatedAt:
-              catalogTimestamp(local) > catalogTimestamp(normalized)
-                ? local.updatedAt || normalized.updatedAt
-                : normalized.updatedAt || local.updatedAt,
-          });
+        const local = catalogRef.current;
 
-          const remoteCount = (normalized.users || []).length;
-          const mergedCount = mergedUsers.length;
-          const needsMetaRepair = mergedUsers.some((u) => {
-            const mail = String(u.meta?.email || '');
-            const role = String(u.meta?.role || '');
-            return Boolean(mail.includes('@') && role);
-          }) && (normalized.users || []).some((u) => {
-            const mail = String(u.meta?.email || '');
-            const nameIsMail = (u.name || '').includes('@');
-            return nameIsMail && !mail.includes('@');
-          });
+        // Local mais novo = save recente; não sobrescrever gestores/unidades/etc.
+        if (loadedOnce.current && catalogTimestamp(local) > catalogTimestamp(normalized)) {
+          return;
+        }
 
-          // Se o local tinha usuários extras OU remoto precisa reparo de meta, regrava
-          if (mergedCount > remoteCount || needsMetaRepair) {
-            const toPush = { ...merged, updatedAt: new Date().toISOString() };
-            void pushRemote(toPush);
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(toPush));
-            notifyCatalogUpdated();
-            return toPush;
-          }
+        const merged = mergeCatalogs(normalized, local);
+        // Se remote é mais novo, preferir listas do remote (já mergeadas com local extras)
+        const preferRemote = catalogTimestamp(normalized) >= catalogTimestamp(local);
+        const applied = preferRemote
+          ? mergeCatalogs(local, normalized)
+          : merged;
 
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-          notifyCatalogUpdated();
-          return merged;
-        });
-      } else {
-        // Seed banco com catálogo local na primeira vez
+        setCatalog(applied);
+        catalogRef.current = applied;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(applied));
+        notifyCatalogUpdated();
+      } else if (!loadedOnce.current) {
         const local = loadLocalCatalog();
         await api.putSetting('catalog', local as unknown as Record<string, unknown>);
       }
+      loadedOnce.current = true;
     } catch (err) {
       console.warn('Falha ao carregar catálogo do banco:', err);
     } finally {
       setSyncing(false);
     }
-  }, [user?.isAuthenticated, pushRemote]);
+  }, [user?.isAuthenticated]);
 
   useEffect(() => {
     if (!user?.isAuthenticated) return;
+    loadedOnce.current = false;
     void pullRemote();
     const timer = window.setInterval(() => void pullRemote(), POLL_MS);
-    return () => window.clearInterval(timer);
+    const onFocus = () => {
+      if (!savingRef.current) void pullRemote();
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+    };
   }, [user?.isAuthenticated, pullRemote]);
 
   const activeOptions = useCallback(
@@ -341,69 +430,69 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const upsertItem = useCallback(
     async (key: Exclude<CatalogKey, 'formFields'>, item: CatalogItem) => {
-      const list = [...catalog[key]];
-      const idx = list.findIndex((i) => i.id === item.id);
-      if (idx >= 0) list[idx] = item;
-      else list.push(item);
-      const next = { ...catalog, [key]: list };
-      const withTs = normalizeCatalog({ ...next, updatedAt: new Date().toISOString() });
-      setCatalog(withTs);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(withTs));
-      notifyCatalogUpdated();
-      if (key === 'users') {
-        const ok = await pushRemote(withTs);
-        if (!ok) {
-          throw new Error('Não foi possível gravar no banco. Tente novamente.');
-        }
-        return;
-      }
-      if (saveTimer.current) window.clearTimeout(saveTimer.current);
-      saveTimer.current = window.setTimeout(() => {
-        void pushRemote(withTs);
-      }, 400);
+      await commit((prev) => {
+        const list = [...(Array.isArray(prev[key]) ? prev[key] : [])];
+        const idx = list.findIndex((i) => i.id === item.id);
+        if (idx >= 0) list[idx] = item;
+        else list.push(item);
+        return { ...prev, [key]: list };
+      });
     },
-    [catalog, pushRemote]
+    [commit]
   );
 
   const removeItem = useCallback(
-    (key: Exclude<CatalogKey, 'formFields'>, id: string) => {
-      const next = {
-        ...catalog,
-        [key]: catalog[key].filter((i) => i.id !== id),
-        ...(key === 'users' ? { userDeleteIds: [id] } : {}),
-      } as SystemCatalog & { userDeleteIds?: string[] };
-      persist(next, { immediate: key === 'users' });
+    async (key: Exclude<CatalogKey, 'formFields'>, id: string) => {
+      await commit((prev) => {
+        const base: CatalogWithDeletes = {
+          ...prev,
+          [key]: (Array.isArray(prev[key]) ? prev[key] : []).filter((i) => i.id !== id),
+        };
+        if (key === 'users') {
+          base.userDeleteIds = [id];
+        } else {
+          base.itemDeleteIds = { [key]: [id] };
+        }
+        return base;
+      });
     },
-    [catalog, persist]
+    [commit]
   );
 
   const upsertFormField = useCallback(
-    (field: FormFieldConfig) => {
-      const list = [...catalog.formFields];
-      const idx = list.findIndex((i) => i.id === field.id);
-      if (idx >= 0) list[idx] = field;
-      else list.push(field);
-      persist({ ...catalog, formFields: list });
+    async (field: FormFieldConfig) => {
+      await commit((prev) => {
+        const list = [...prev.formFields];
+        const idx = list.findIndex((i) => i.id === field.id);
+        if (idx >= 0) list[idx] = field;
+        else list.push(field);
+        return { ...prev, formFields: list };
+      });
     },
-    [catalog, persist]
+    [commit]
   );
 
   const removeFormField = useCallback(
-    (id: string) => {
-      persist({ ...catalog, formFields: catalog.formFields.filter((f) => f.id !== id) });
+    async (id: string) => {
+      await commit((prev) => ({
+        ...prev,
+        formFields: prev.formFields.filter((f) => f.id !== id),
+        itemDeleteIds: { formFields: [id] },
+      }));
     },
-    [catalog, persist]
+    [commit]
   );
 
   const updateSla = useCallback(
-    (sla: SlaSettings) => persist({ ...catalog, sla }),
-    [catalog, persist]
+    async (sla: SlaSettings) => {
+      await commit((prev) => ({ ...prev, sla }));
+    },
+    [commit]
   );
 
-  const resetDefaults = useCallback(() => {
-    const fresh = createDefaultCatalog();
-    persist(fresh);
-  }, [persist]);
+  const resetDefaults = useCallback(async () => {
+    await commit(() => createDefaultCatalog());
+  }, [commit]);
 
   const value = useMemo(
     () => ({

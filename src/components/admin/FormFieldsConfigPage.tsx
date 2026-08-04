@@ -64,7 +64,7 @@ export const FormFieldsConfigPage: React.FC<Props> = ({ addToast }) => {
     setSortOrder(f.sortOrder);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!key.trim() || !label.trim()) {
       addToast({ type: 'error', title: 'Campos obrigatórios', message: 'Informe chave e rótulo.' });
@@ -85,9 +85,17 @@ export const FormFieldsConfigPage: React.FC<Props> = ({ addToast }) => {
       sortOrder,
       active: true,
     };
-    upsertFormField(payload);
-    addToast({ type: 'success', title: 'Campo salvo', message: payload.label });
-    reset();
+    try {
+      await upsertFormField(payload);
+      addToast({ type: 'success', title: 'Campo salvo', message: payload.label });
+      reset();
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Falha ao salvar',
+        message: err instanceof Error ? err.message : 'Não foi possível gravar no banco.',
+      });
+    }
   };
 
   return (
@@ -202,10 +210,19 @@ export const FormFieldsConfigPage: React.FC<Props> = ({ addToast }) => {
                     <button
                       type="button"
                       onClick={() => {
-                        if (confirm(`Excluir campo "${f.label}"?`)) {
-                          removeFormField(f.id);
-                          addToast({ type: 'warning', title: 'Campo removido', message: f.label });
-                        }
+                        void (async () => {
+                          if (!confirm(`Excluir campo "${f.label}"?`)) return;
+                          try {
+                            await removeFormField(f.id);
+                            addToast({ type: 'warning', title: 'Campo removido', message: f.label });
+                          } catch (err) {
+                            addToast({
+                              type: 'error',
+                              title: 'Falha ao excluir',
+                              message: err instanceof Error ? err.message : 'Não foi possível gravar.',
+                            });
+                          }
+                        })();
                       }}
                       className="p-1.5 text-slate-500 hover:text-rose-600"
                     >
