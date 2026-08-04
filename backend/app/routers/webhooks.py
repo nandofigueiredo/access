@@ -1,19 +1,23 @@
-"""Webhook para gravar número do chamado GLPI (Power Automate / Office 365)."""
+"""Webhook GLPI + sync pelo banco MySQL do GLPI."""
 
 from __future__ import annotations
 
 import hmac
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import get_current_user
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.models.offboarding import OffboardingRequest
 from app.models.onboarding import OnboardingRequest
-from app.schemas import GlpiWebhookIn, GlpiWebhookOut
+from app.models.user import User
+from app.schemas import GlpiDbSyncOut, GlpiWebhookIn, GlpiWebhookOut
 from app.services.audit import write_audit_log
+from app.services.glpi_db import ping_glpi_db, sync_glpi_numbers_from_db
 from app.services.glpi_notify import extract_glpi_ticket_number, extract_portal_ticket_id
 from app.services.sanitizer import sanitize_text
 
@@ -96,4 +100,33 @@ async def glpi_ticket_webhook(
         portalTicketId=portal_id,
         glpiTicketNumber=glpi_num,
         message=f"Chamado GLPI {glpi_num} vinculado a {portal_id}.",
+    )
+
+
+@router.get("/glpi-db/status")
+async def glpi_db_status(
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    if current_user.role not in {"admin", "ti"}:
+        raise HTTPException(status_code=403, detail="Sem permissão.")
+    return await ping_glpi_db()
+
+
+@router.post("/glpi-db/sync", response_model=GlpiDbSyncOut)
+async def glpi_db_sync(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GlpiDbSyncOut:
+    """Lê o MySQL do GLPI e preenche nº nos chamados do portal ainda sem vínculo."""
+    if current_user.role not in {"admin", "ti"}:
+        raise HTTPException(status_code=403, detail="Sem permissão.")
+    result = await sync_glpi_numbers_from_db(db, performed_by_user_id=current_user.id)
+    db_status = await ping_glpi_db()
+    return GlpiDbSyncOut(
+        ok=bool(result.get("ok")),
+        linked=int(result.get("linked") or 0),
+        checked=int(result.get("checked") or 0),
+        items=list(result.get("items") or []),
+        error=result.get("error"),
+        dbStatus=db_status,
     )

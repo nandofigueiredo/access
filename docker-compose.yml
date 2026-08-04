@@ -73,6 +73,13 @@ services:
       ADMIN_EMAILS: ${ADMIN_EMAILS:-luis.figueiredo@diroma.com.br}
       AUTH_DISABLED: ${AUTH_DISABLED:-false}
       GLPI_WEBHOOK_SECRET: ${GLPI_WEBHOOK_SECRET:-}
+      GLPI_DB_HOST: ${GLPI_DB_HOST:-}
+      GLPI_DB_PORT: ${GLPI_DB_PORT:-3306}
+      GLPI_DB_USER: ${GLPI_DB_USER:-}
+      GLPI_DB_PASSWORD: ${GLPI_DB_PASSWORD:-}
+      GLPI_DB_NAME: ${GLPI_DB_NAME:-}
+      GLPI_DB_SYNC_ENABLED: ${GLPI_DB_SYNC_ENABLED:-true}
+      GLPI_DB_SYNC_INTERVAL_SEC: ${GLPI_DB_SYNC_INTERVAL_SEC:-60}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:

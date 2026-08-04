@@ -233,6 +233,15 @@ class GlpiWebhookOut(BaseModel):
     message: str
 
 
+class GlpiDbSyncOut(BaseModel):
+    ok: bool
+    linked: int = 0
+    checked: int = 0
+    items: list[dict[str, str]] = Field(default_factory=list)
+    error: str | None = None
+    dbStatus: dict[str, Any] | None = None
+
+
 class UserMeOut(BaseModel):
     id: UUID
     name: str

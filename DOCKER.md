@@ -119,7 +119,31 @@ Em **Configuração → SMTP / E-mail**:
 
 Na criação de Onboarding/Offboarding a API envia e-mail com marcador `[PORTAL:ONB-…]` / `[PORTAL:OFF-…]`.
 
-### Webhook (retorno do número)
+### Retorno do número (banco GLPI — recomendado)
+
+A API consulta o MySQL/MariaDB do GLPI e vincula o `id` do ticket quando encontra
+`[PORTAL:ONB-…]` / `[PORTAL:OFF-…]` no conteúdo/assunto.
+
+No `.env` do servidor:
+
+```bash
+GLPI_DB_HOST=10.1.0.24
+GLPI_DB_PORT=3306
+GLPI_DB_USER=glpi_v11
+GLPI_DB_PASSWORD=********
+GLPI_DB_NAME=glpi_prod_v11
+GLPI_DB_SYNC_ENABLED=true
+GLPI_DB_SYNC_INTERVAL_SEC=60
+```
+
+Reinicie a API. Sync automático a cada 60s + endpoints:
+
+- `GET /api/v1/webhooks/glpi-db/status` — testa conexão
+- `POST /api/v1/webhooks/glpi-db/sync` — força sync agora (admin/SD)
+
+O número também pode ser digitado manualmente no detalhe do chamado.
+
+### Webhook (opcional)
 
 1. Defina `GLPI_WEBHOOK_SECRET` no `.env` e reinicie a API.
 2. Power Automate (caixa que recebe a resposta do GLPI):
@@ -139,5 +163,3 @@ Na criação de Onboarding/Offboarding a API envia e-mail com marcador `[PORTAL:
 ```
 
 Se `portalTicketId` / `glpiTicketNumber` vierem vazios, a API tenta extrair de `subject`/`body`.
-
-O número também pode ser digitado manualmente no detalhe do chamado (campo **Nº chamado GLPI**).

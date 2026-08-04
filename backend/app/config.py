@@ -46,15 +46,28 @@ class Settings(BaseSettings):
     demo_user_name: str = "Luis Figueiredo"
     demo_user_role: str = "admin"
 
-    # Webhook GLPI (Power Automate / Office 365)
+    # Webhook GLPI (Power Automate / Office 365) — opcional se usar banco
     glpi_webhook_secret: str = ""
 
-    @field_validator("auth_disabled", mode="before")
+    # Leitura direta do MySQL/MariaDB do GLPI (número do chamado)
+    glpi_db_host: str = ""
+    glpi_db_port: int = 3306
+    glpi_db_user: str = ""
+    glpi_db_password: str = ""
+    glpi_db_name: str = ""
+    glpi_db_sync_enabled: bool = True
+    glpi_db_sync_interval_sec: int = 60
+
+    @field_validator("auth_disabled", "glpi_db_sync_enabled", mode="before")
     @classmethod
     def parse_bool(cls, v):  # noqa: ANN001
         if isinstance(v, str):
             return v.strip().lower() in {"1", "true", "yes", "on"}
         return bool(v)
+
+    @property
+    def glpi_db_configured(self) -> bool:
+        return bool(self.glpi_db_host and self.glpi_db_user and self.glpi_db_name)
 
     @property
     def allowed_domains(self) -> List[str]:

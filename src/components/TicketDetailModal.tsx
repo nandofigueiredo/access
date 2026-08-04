@@ -378,8 +378,9 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
               </p>
             )}
             <p className="text-[11px] text-slate-500">
-              O e-mail ao GLPI abre o chamado, mas o número só volta automaticamente se o webhook estiver
-              configurado. Enquanto isso, o Service Desk pode digitar o nº aqui e salvar.
+              O número é preenchido automaticamente ao encontrar o chamado no banco do GLPI
+              (marcador [PORTAL:…]), em até ~1 minuto. Se ainda estiver vazio, o Service Desk
+              pode digitar aqui e salvar.
             </p>
           </div>
 

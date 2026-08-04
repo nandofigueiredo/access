@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+import asyncio
+import logging
 
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import http_exception_handler
@@ -7,15 +9,55 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse
 
 from app.config import get_settings
+from app.database import AsyncSessionLocal
 from app.redis_client import close_redis, redis_ping
 from app.routers import access, audit, offboarding, onboarding, requests, settings, users, webhooks
+from app.services.glpi_db import sync_glpi_numbers_from_db
 
 settings_cfg = get_settings()
+logger = logging.getLogger(__name__)
+
+
+async def _glpi_sync_loop(stop: asyncio.Event) -> None:
+    """A cada N segundos, tenta vincular nº GLPI via MySQL para chamados sem número."""
+    interval = max(30, int(settings_cfg.glpi_db_sync_interval_sec or 60))
+    while not stop.is_set():
+        try:
+            if settings_cfg.glpi_db_configured and settings_cfg.glpi_db_sync_enabled:
+                async with AsyncSessionLocal() as session:
+                    result = await sync_glpi_numbers_from_db(session)
+                    await session.commit()
+                    if result.get("linked"):
+                        logger.info(
+                            "GLPI DB sync: %s vinculado(s) de %s verificados",
+                            result.get("linked"),
+                            result.get("checked"),
+                        )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("GLPI DB sync falhou: %s", exc)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+        except asyncio.TimeoutError:
+            continue
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    stop = asyncio.Event()
+    task: asyncio.Task | None = None
+    if settings_cfg.glpi_db_configured and settings_cfg.glpi_db_sync_enabled:
+        task = asyncio.create_task(_glpi_sync_loop(stop), name="glpi-db-sync")
+        logger.info(
+            "GLPI DB sync ativo (%s:%s/%s a cada %ss)",
+            settings_cfg.glpi_db_host,
+            settings_cfg.glpi_db_port,
+            settings_cfg.glpi_db_name,
+            settings_cfg.glpi_db_sync_interval_sec,
+        )
     yield
+    stop.set()
+    if task:
+        await task
     await close_redis()
 
 
@@ -55,6 +97,7 @@ async def health() -> dict[str, str]:
         "env": settings_cfg.app_env,
         "redis": "up" if redis_ok else "down",
         "auth_disabled": str(settings_cfg.auth_disabled).lower(),
+        "glpi_db": "configured" if settings_cfg.glpi_db_configured else "off",
     }
 
 
