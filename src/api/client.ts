@@ -119,7 +119,7 @@ function normalizeTicketDates<T extends Ticket>(ticket: T): T {
 export type TicketUpdatePayload = {
   status: TicketStatus;
   itNotes?: string;
-  itChecklist?: Record<string, boolean>;
+  itChecklist?: Record<string, unknown>;
   workflow?: Record<string, unknown>;
   requesterEmail?: string;
   assignedQueue?: string;
