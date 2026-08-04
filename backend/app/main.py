@@ -98,6 +98,7 @@ async def health() -> dict[str, str]:
         "redis": "up" if redis_ok else "down",
         "auth_disabled": str(settings_cfg.auth_disabled).lower(),
         "glpi_db": "configured" if settings_cfg.glpi_db_configured else "off",
+        "glpi_api": "configured" if settings_cfg.glpi_api_configured else "off",
     }
 
 

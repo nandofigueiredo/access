@@ -17,6 +17,7 @@ from app.models.onboarding import OnboardingRequest
 from app.models.user import User
 from app.schemas import GlpiDbSyncOut, GlpiWebhookIn, GlpiWebhookOut
 from app.services.audit import write_audit_log
+from app.services.glpi_api import ping_glpi_api
 from app.services.glpi_db import ping_glpi_db, sync_glpi_numbers_from_db
 from app.services.glpi_notify import extract_glpi_ticket_number, extract_portal_ticket_id
 from app.services.sanitizer import sanitize_text
@@ -110,6 +111,15 @@ async def glpi_db_status(
     if current_user.role not in {"admin", "ti"}:
         raise HTTPException(status_code=403, detail="Sem permissão.")
     return await ping_glpi_db()
+
+
+@router.get("/glpi-api/status")
+async def glpi_api_status(
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    if current_user.role not in {"admin", "ti"}:
+        raise HTTPException(status_code=403, detail="Sem permissão.")
+    return await ping_glpi_api()
 
 
 @router.post("/glpi-db/sync", response_model=GlpiDbSyncOut)

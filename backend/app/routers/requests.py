@@ -125,7 +125,7 @@ async def resend_glpi_notify(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> MessageOut:
-    """Reenvia e-mail de abertura ao GLPI (útil se o collector não recebeu na criação)."""
+    """Abre/reabre chamado no GLPI via API REST (grava o número no portal)."""
     if current_user.role not in {"admin", "ti"}:
         raise HTTPException(status_code=403, detail="Sem permissão.")
 
@@ -156,6 +156,11 @@ async def resend_glpi_notify(
     )
 
     status_s = str(notify.get("status") or "failed")
+    glpi_num = notify.get("glpiTicketNumber") or row.glpi_ticket_number
+    if notify.get("ok") and status_s == "created" and glpi_num:
+        return MessageOut(detail=f"Chamado GLPI #{glpi_num} criado e vinculado.")
+    if notify.get("ok") and status_s == "already_linked" and glpi_num:
+        return MessageOut(detail=f"Chamado GLPI já vinculado: #{glpi_num}.")
     if notify.get("ok") and status_s == "sent":
         return MessageOut(detail=f"E-mail enviado ao GLPI ({', '.join(notify.get('to') or [])}).")
     if status_s == "skipped":
@@ -164,5 +169,5 @@ async def resend_glpi_notify(
         raise HTTPException(status_code=422, detail="SMTP desabilitado. Habilite em Configuração → SMTP.")
     raise HTTPException(
         status_code=422,
-        detail=str(notify.get("error") or f"Falha no envio SMTP ({status_s})."),
+        detail=str(notify.get("error") or f"Falha ao abrir no GLPI ({status_s})."),
     )

@@ -153,18 +153,6 @@ const AppContent: React.FC = () => {
         template: 'ticket_created_sd',
         ticketId: created.id,
       });
-      if (smtp.glpiEnabled !== false && smtp.glpiInbox) {
-        // O e-mail real ao GLPI é enviado pelo backend (notify_glpi_on_create).
-        sendMail({
-          to: [smtp.glpiInbox],
-          subject: `[PORTAL:${created.id}] ${created.type === 'onboarding' ? 'Onboarding' : 'Offboarding'} — ${created.nomeCompleto}`,
-          body:
-            `Pedido de abertura GLPI — o backend envia o SMTP real para ${smtp.glpiInbox}.\n` +
-            `Marcador: [PORTAL:${created.id}]`,
-          template: 'ticket_created_glpi',
-          ticketId: created.id,
-        });
-      }
       if (smtp.notifyRequesterOnCreate && user?.email) {
         sendMail({
           to: [user.email],
@@ -179,7 +167,7 @@ const AppContent: React.FC = () => {
         title: 'Salvo no banco',
         message:
           smtp.glpiEnabled !== false
-            ? `${created.id} criado. E-mail de abertura ao GLPI sai pelo SMTP do servidor (mesmo com Modo teste). Confira se SMTP está Habilitado.`
+            ? `${created.id} criado. Chamado GLPI aberto pela API (número gravado automaticamente).`
             : `${created.id} criado e sincronizado.`,
       });
       setActiveTab('tools-workflow');

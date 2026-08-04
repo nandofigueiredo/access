@@ -117,31 +117,25 @@ Em **Configuração → SMTP / E-mail**:
 2. Preencha host/usuário/senha Office 365.
 3. **Caixa GLPI** = `glpi@diroma.com.br` e mantenha **Enviar e-mail ao GLPI** ativo.
 
-Na criação de Onboarding/Offboarding a API envia e-mail com marcador `[PORTAL:ONB-…]` / `[PORTAL:OFF-…]`.
+Na criação de Onboarding/Offboarding o portal abre o chamado **só pela API REST do GLPI** e grava o número na hora.
 
-### Retorno do número (banco GLPI — recomendado)
-
-A API consulta o MySQL/MariaDB do GLPI e vincula o `id` do ticket quando encontra
-`[PORTAL:ONB-…]` / `[PORTAL:OFF-…]` no conteúdo/assunto.
-
-No `.env` do servidor:
+### API REST GLPI (obrigatório)
 
 ```bash
-GLPI_DB_HOST=10.1.0.24
-GLPI_DB_PORT=3306
-GLPI_DB_USER=glpi_v11
-GLPI_DB_PASSWORD=********
-GLPI_DB_NAME=glpi_prod_v11
-GLPI_DB_SYNC_ENABLED=true
-GLPI_DB_SYNC_INTERVAL_SEC=60
+GLPI_API_URL=https://glpi.diroma.com.br/apirest.php
+GLPI_APP_TOKEN=********
+GLPI_API_USER=access
+GLPI_API_PASSWORD=********
+GLPI_API_ENABLED=true
+GLPI_EMAIL_FALLBACK=false
+GLPI_DB_SYNC_ENABLED=false
 ```
 
-Reinicie a API. Sync automático a cada 60s + endpoints:
+No cliente API do GLPI, libere o IP do servidor Access (`10.1.0.229`).
 
-- `GET /api/v1/webhooks/glpi-db/status` — testa conexão
-- `POST /api/v1/webhooks/glpi-db/sync` — força sync agora (admin/SD)
+Teste: `GET /api/v1/webhooks/glpi-api/status` (admin/TI).
 
-O número também pode ser digitado manualmente no detalhe do chamado.
+E-mail collector / sync MySQL ficam desligados por padrão (`GLPI_EMAIL_FALLBACK=false`, `GLPI_DB_SYNC_ENABLED=false`).
 
 ### Webhook (opcional)
 

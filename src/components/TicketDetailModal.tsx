@@ -100,12 +100,18 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
     setGlpiSending(true);
     try {
       const res = await api.notifyGlpi(ticket.id);
-      addToast({ type: 'success', title: 'E-mail GLPI', message: res.detail });
+      const match = /\b#?(\d{4,})\b/.exec(res.detail || '');
+      if (match) {
+        const num = match[1];
+        setGlpiTicketNumber(num);
+        onUpdateTicket({ ...ticket, glpiTicketNumber: num });
+      }
+      addToast({ type: 'success', title: 'GLPI', message: res.detail });
     } catch (err) {
       addToast({
         type: 'error',
-        title: 'Falha ao enviar ao GLPI',
-        message: err instanceof Error ? err.message : 'Não foi possível enviar o e-mail.',
+        title: 'Falha ao abrir no GLPI',
+        message: err instanceof Error ? err.message : 'Não foi possível criar o chamado via API.',
       });
     } finally {
       setGlpiSending(false);
@@ -383,7 +389,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
 
           <div className="p-4 rounded-xl border border-slate-200 bg-white space-y-2">
             <label className="block text-xs font-bold text-slate-800">
-              Nº chamado GLPI <span className="font-normal text-slate-400">(glpi@diroma.com.br)</span>
+              Nº chamado GLPI
             </label>
             {canEditTI ? (
               <input
@@ -398,18 +404,21 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
               </p>
             )}
             <p className="text-[11px] text-slate-500">
-              O número é preenchido automaticamente ao encontrar o chamado no banco do GLPI
-              (marcador [PORTAL:…]), em até ~1 minuto. Se ainda estiver vazio, o Service Desk
-              pode digitar aqui e salvar.
+              Preenchido automaticamente pela API do GLPI na criação (ou pelo botão abaixo).
+              Se estiver vazio, o Service Desk pode digitar e salvar.
             </p>
             {canEditTI && USE_API && (
               <button
                 type="button"
-                disabled={glpiSending}
+                disabled={glpiSending || Boolean(glpiTicketNumber.trim())}
                 onClick={() => void handleResendGlpi()}
                 className="mt-1 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-violet-200 bg-violet-50 text-violet-800 hover:bg-violet-100 disabled:opacity-60"
               >
-                {glpiSending ? 'Enviando…' : 'Reenviar e-mail de abertura ao GLPI'}
+                {glpiSending
+                  ? 'Abrindo no GLPI…'
+                  : glpiTicketNumber.trim()
+                    ? `Vinculado #${glpiTicketNumber.trim()}`
+                    : 'Abrir chamado no GLPI (API)'}
               </button>
             )}
           </div>

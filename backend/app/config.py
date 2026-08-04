@@ -49,25 +49,58 @@ class Settings(BaseSettings):
     # Webhook GLPI (Power Automate / Office 365) — opcional se usar banco
     glpi_webhook_secret: str = ""
 
-    # Leitura direta do MySQL/MariaDB do GLPI (número do chamado)
+    # API REST GLPI (abertura de chamado + nº na resposta)
+    glpi_api_url: str = ""
+    glpi_app_token: str = ""
+    glpi_api_user: str = ""
+    glpi_api_password: str = ""
+    glpi_user_token: str = ""
+    glpi_entity_id: int | None = None
+    glpi_api_enabled: bool = True
+    glpi_email_fallback: bool = False
+
+    # Leitura direta do MySQL/MariaDB do GLPI (opcional; API já devolve o nº)
     glpi_db_host: str = ""
     glpi_db_port: int = 3306
     glpi_db_user: str = ""
     glpi_db_password: str = ""
     glpi_db_name: str = ""
-    glpi_db_sync_enabled: bool = True
+    glpi_db_sync_enabled: bool = False
     glpi_db_sync_interval_sec: int = 60
 
-    @field_validator("auth_disabled", "glpi_db_sync_enabled", mode="before")
+    @field_validator(
+        "auth_disabled",
+        "glpi_db_sync_enabled",
+        "glpi_api_enabled",
+        "glpi_email_fallback",
+        mode="before",
+    )
     @classmethod
     def parse_bool(cls, v):  # noqa: ANN001
         if isinstance(v, str):
             return v.strip().lower() in {"1", "true", "yes", "on"}
         return bool(v)
 
+    @field_validator("glpi_entity_id", mode="before")
+    @classmethod
+    def parse_optional_int(cls, v):  # noqa: ANN001
+        if v is None or v == "":
+            return None
+        return int(v)
+
     @property
     def glpi_db_configured(self) -> bool:
         return bool(self.glpi_db_host and self.glpi_db_user and self.glpi_db_name)
+
+    @property
+    def glpi_api_configured(self) -> bool:
+        if not self.glpi_api_enabled:
+            return False
+        if not (self.glpi_api_url and self.glpi_app_token):
+            return False
+        has_user_token = bool((self.glpi_user_token or "").strip())
+        has_basic = bool((self.glpi_api_user or "").strip() and (self.glpi_api_password or "").strip())
+        return has_user_token or has_basic
 
     @property
     def allowed_domains(self) -> List[str]:
