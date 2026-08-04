@@ -6,6 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth import get_current_user
+from app.auth.access import (
+    ROLES_CREATE_ONBOARDING,
+    ROLES_DELETE_TICKETS,
+    assert_ticket_visible,
+    require_roles,
+    ticket_visible_to,
+)
 from app.database import get_db
 from app.models.onboarding import OnboardingRequest
 from app.models.user import User
@@ -60,6 +67,11 @@ async def create_onboarding(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> OnboardingOut:
+    require_roles(
+        current_user,
+        ROLES_CREATE_ONBOARDING,
+        detail="Sem permissão para criar onboarding.",
+    )
     try:
         cpf = sanitize_cpf(payload.cpf)
     except ValueError as exc:
@@ -158,7 +170,6 @@ async def list_onboarding(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[OnboardingOut]:
-    _ = current_user
     stmt = (
         select(OnboardingRequest)
         .options(selectinload(OnboardingRequest.creator))
@@ -171,7 +182,15 @@ async def list_onboarding(
 
     result = await db.execute(stmt)
     rows = result.scalars().all()
-    return [_to_out(r, r.creator.email if r.creator else "unknown") for r in rows]
+    return [
+        _to_out(r, r.creator.email if r.creator else "unknown")
+        for r in rows
+        if ticket_visible_to(
+            current_user,
+            requester_email=r.requester_email,
+            manager=r.manager,
+        )
+    ]
 
 
 @router.get("/{ticket_id}", response_model=OnboardingOut)
@@ -180,7 +199,6 @@ async def get_onboarding(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> OnboardingOut:
-    _ = current_user
     result = await db.execute(
         select(OnboardingRequest)
         .options(selectinload(OnboardingRequest.creator))
@@ -189,6 +207,11 @@ async def get_onboarding(
     row = result.scalar_one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Chamado de onboarding não encontrado.")
+    assert_ticket_visible(
+        current_user,
+        requester_email=row.requester_email,
+        manager=row.manager,
+    )
     return _to_out(row, row.creator.email if row.creator else "unknown")
 
 
@@ -198,8 +221,11 @@ async def delete_onboarding(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    if current_user.role not in {"admin", "ti", "rh"}:
-        raise HTTPException(status_code=403, detail="Sem permissão para excluir chamados.")
+    require_roles(
+        current_user,
+        ROLES_DELETE_TICKETS,
+        detail="Sem permissão para excluir chamados.",
+    )
 
     result = await db.execute(select(OnboardingRequest).where(OnboardingRequest.id == ticket_id))
     row = result.scalar_one_or_none()

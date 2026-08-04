@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth import get_current_user
+from app.auth.access import ROLES_ADMIN_ONLY, require_roles
 from app.database import get_db
 from app.models.audit import AuditLog
 from app.models.user import User
@@ -21,7 +22,7 @@ async def list_audit_logs(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[AuditLogOut]:
-    _ = current_user
+    require_roles(current_user, ROLES_ADMIN_ONLY, detail="Somente Admin N3 pode ver auditoria.")
     stmt = (
         select(AuditLog)
         .options(selectinload(AuditLog.performer))

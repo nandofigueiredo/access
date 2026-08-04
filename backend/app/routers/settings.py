@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.auth import get_current_user
+from app.auth.access import ROLES_ADMIN_ONLY, require_roles, sanitize_settings_value_for_role
 from app.database import get_db
 from app.models.settings import AppSetting
 from app.models.user import User
@@ -85,8 +86,7 @@ async def test_smtp(
     current_user: User = Depends(get_current_user),
 ) -> SmtpTestOut:
     """Envia e-mail de teste usando a config SMTP gravada em app_settings."""
-    if current_user.role not in {"admin", "ti"}:
-        raise HTTPException(status_code=403, detail="Sem permissão para testar SMTP.")
+    require_roles(current_user, ROLES_ADMIN_ONLY, detail="Somente Admin N3 pode testar SMTP.")
 
     result = await db.execute(select(AppSetting).where(AppSetting.key == "smtp"))
     row = result.scalar_one_or_none()
@@ -216,7 +216,6 @@ async def get_setting(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> SettingsOut:
-    _ = current_user
     if key not in ALLOWED_KEYS:
         raise HTTPException(status_code=404, detail="Chave de configuração inválida.")
 
@@ -224,8 +223,8 @@ async def get_setting(
     row = result.scalar_one_or_none()
     if not row:
         return SettingsOut(key=key, value={}, updatedAt=None)
-    # Cópia: evita greenlet ao serializar JSONB da sessão
-    return SettingsOut(key=row.key, value=copy.deepcopy(row.value or {}), updatedAt=row.updated_at)
+    value = sanitize_settings_value_for_role(key, copy.deepcopy(row.value or {}), current_user)
+    return SettingsOut(key=row.key, value=value, updatedAt=row.updated_at)
 
 
 @router.put("/{key}", response_model=SettingsOut)
@@ -237,11 +236,11 @@ async def put_setting(
 ) -> SettingsOut:
     if key not in ALLOWED_KEYS:
         raise HTTPException(status_code=404, detail="Chave de configuração inválida.")
-    # Catálogo (usuários/perfis) só Admin N3; SMTP pode ser ajustado por SD também
-    if key == "catalog" and current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Somente Admin N3 pode alterar o catálogo (usuários e perfis).")
-    if key != "catalog" and current_user.role not in {"admin", "ti"}:
-        raise HTTPException(status_code=403, detail="Sem permissão para alterar configurações.")
+    require_roles(
+        current_user,
+        ROLES_ADMIN_ONLY,
+        detail="Somente Admin N3 pode alterar configurações.",
+    )
 
     result = await db.execute(select(AppSetting).where(AppSetting.key == key))
     row = result.scalar_one_or_none()

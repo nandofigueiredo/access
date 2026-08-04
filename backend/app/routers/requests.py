@@ -8,6 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.auth import get_current_user
+from app.auth.access import (
+    ROLES_OPERATE_TICKETS,
+    assert_ticket_visible,
+    require_roles,
+)
 from app.database import get_db
 from app.models.offboarding import OffboardingRequest
 from app.models.onboarding import OnboardingRequest
@@ -35,8 +40,11 @@ async def update_request_status(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> StatusUpdateOut:
-    if current_user.role not in {"admin", "ti", "rh"}:
-        raise HTTPException(status_code=403, detail="Sem permissão para alterar status.")
+    require_roles(
+        current_user,
+        ROLES_OPERATE_TICKETS,
+        detail="Sem permissão para alterar status.",
+    )
 
     request_type: str
     row: OnboardingRequest | OffboardingRequest | None = None
@@ -61,6 +69,11 @@ async def update_request_status(
     if not row:
         raise HTTPException(status_code=404, detail="Chamado não encontrado.")
 
+    assert_ticket_visible(
+        current_user,
+        requester_email=row.requester_email,
+        manager=row.manager,
+    )
     old_status = row.status
     if payload.status != old_status and payload.status not in ALLOWED_TRANSITIONS.get(old_status, set()):
         raise HTTPException(

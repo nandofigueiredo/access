@@ -296,6 +296,8 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const pushRemote = useCallback(async (next: CatalogWithDeletes) => {
     if (!USE_API || !user?.isAuthenticated) return !USE_API;
+    // Somente Admin N3 grava catálogo no servidor
+    if (user.role !== 'admin') return false;
     savingRef.current = true;
     try {
       const userDeleteIds = next.userDeleteIds;
@@ -330,7 +332,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
         savingRef.current = false;
       }, 1000);
     }
-  }, [user?.isAuthenticated]);
+  }, [user?.isAuthenticated, user?.role]);
 
   const commit = useCallback(
     async (build: (prev: SystemCatalog) => CatalogWithDeletes) => {
@@ -385,7 +387,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
         catalogRef.current = applied;
         localStorage.setItem(STORAGE_KEY, JSON.stringify(applied));
         notifyCatalogUpdated();
-      } else if (!loadedOnce.current) {
+      } else if (!loadedOnce.current && user.role === 'admin') {
         const local = loadLocalCatalog();
         await api.putSetting('catalog', local as unknown as Record<string, unknown>);
       }
@@ -395,7 +397,7 @@ export const CatalogProvider: React.FC<{ children: React.ReactNode }> = ({ child
     } finally {
       setSyncing(false);
     }
-  }, [user?.isAuthenticated]);
+  }, [user?.isAuthenticated, user?.role]);
 
   useEffect(() => {
     if (!user?.isAuthenticated) return;

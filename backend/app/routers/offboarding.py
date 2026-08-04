@@ -6,6 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth import get_current_user
+from app.auth.access import (
+    ROLES_CREATE_OFFBOARDING,
+    ROLES_DELETE_TICKETS,
+    assert_ticket_visible,
+    require_roles,
+    ticket_visible_to,
+)
 from app.database import get_db
 from app.models.offboarding import OffboardingRequest
 from app.models.user import User
@@ -53,6 +60,11 @@ async def create_offboarding(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> OffboardingOut:
+    require_roles(
+        current_user,
+        ROLES_CREATE_OFFBOARDING,
+        detail="Sem permissão para criar offboarding.",
+    )
     corp_email = sanitize_email(str(payload.emailCorporativo))
     if not corp_email:
         raise HTTPException(status_code=422, detail="E-mail corporativo inválido.")
@@ -130,7 +142,6 @@ async def list_offboarding(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[OffboardingOut]:
-    _ = current_user
     stmt = (
         select(OffboardingRequest)
         .options(selectinload(OffboardingRequest.creator))
@@ -141,7 +152,15 @@ async def list_offboarding(
 
     result = await db.execute(stmt)
     rows = result.scalars().all()
-    return [_to_out(r, r.creator.email if r.creator else "unknown") for r in rows]
+    return [
+        _to_out(r, r.creator.email if r.creator else "unknown")
+        for r in rows
+        if ticket_visible_to(
+            current_user,
+            requester_email=r.requester_email,
+            manager=r.manager,
+        )
+    ]
 
 
 @router.get("/{ticket_id}", response_model=OffboardingOut)
@@ -150,7 +169,6 @@ async def get_offboarding(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> OffboardingOut:
-    _ = current_user
     result = await db.execute(
         select(OffboardingRequest)
         .options(selectinload(OffboardingRequest.creator))
@@ -159,6 +177,11 @@ async def get_offboarding(
     row = result.scalar_one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Chamado de offboarding não encontrado.")
+    assert_ticket_visible(
+        current_user,
+        requester_email=row.requester_email,
+        manager=row.manager,
+    )
     return _to_out(row, row.creator.email if row.creator else "unknown")
 
 
@@ -168,8 +191,11 @@ async def delete_offboarding(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> Response:
-    if current_user.role not in {"admin", "ti", "rh"}:
-        raise HTTPException(status_code=403, detail="Sem permissão para excluir chamados.")
+    require_roles(
+        current_user,
+        ROLES_DELETE_TICKETS,
+        detail="Sem permissão para excluir chamados.",
+    )
 
     result = await db.execute(select(OffboardingRequest).where(OffboardingRequest.id == ticket_id))
     row = result.scalar_one_or_none()

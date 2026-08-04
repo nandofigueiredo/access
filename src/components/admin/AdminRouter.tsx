@@ -16,6 +16,8 @@ import { SmtpConfigPage } from './SmtpConfigPage';
 import { WorkflowBoardPage } from './WorkflowBoardPage';
 import { WorkflowConfigPage } from './WorkflowConfigPage';
 import { ToastMessage, Ticket } from '../../types';
+import { useAuth } from '../../auth/AuthContext';
+import { canAccessPage } from '../../auth/roles';
 
 interface Props {
   page: AppPage;
@@ -26,7 +28,16 @@ interface Props {
 }
 
 export const AdminRouter: React.FC<Props> = ({ page, addToast, tickets, onOpenEntra, onSelectTicket }) => {
+  const { user } = useAuth();
   const { catalog, upsertItem, removeItem } = useCatalog();
+
+  if (!canAccessPage(user?.role, page)) {
+    return (
+      <div className="p-6 text-sm text-slate-600">
+        Você não tem permissão para acessar esta página.
+      </div>
+    );
+  }
 
   const crud = (
     key: Parameters<typeof upsertItem>[0],

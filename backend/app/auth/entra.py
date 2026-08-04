@@ -86,13 +86,8 @@ async def _role_from_portal_catalog(db: AsyncSession, email: str) -> tuple[str |
 
 
 def _resolve_role(email: str, claims: dict[str, Any], catalog_role: str | None = None) -> str:
-    """
-    Admin fixo = equipe N3 (ADMIN_EMAILS + prefixo n3.).
-    Demais: catálogo do portal (Usuários & Perfis) tem prioridade sobre claims Entra.
-    Default @diroma.com.br = viewer.
-    """
+    """Resolve papel: admin fixo → catálogo → claims Entra → viewer (sem heurística de prefixo)."""
     normalized = email.strip().lower()
-    local = normalized.split("@")[0]
     admin_emails = {
         e.strip().lower()
         for e in (get_settings().admin_emails or "").split(",")
@@ -118,15 +113,6 @@ def _resolve_role(email: str, claims: dict[str, Any], catalog_role: str | None =
         if "service_desk" in lowered or "servicedesk" in lowered:
             return "ti"
 
-    # Sem cadastro no catálogo e sem claim Entra: somente leitura nunca é auto-elevada
-    if local.startswith("rh.") or ".rh" in local:
-        return "rh"
-    if local.startswith(("gestor.", "manager.")):
-        return "gestor"
-    if local.startswith(("ti.", "sd.", "servicedesk.")):
-        return "ti"
-    if local.startswith("viewer.") or local == "viewer":
-        return "viewer"
     return "viewer"
 
 

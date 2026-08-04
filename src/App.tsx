@@ -17,7 +17,7 @@ import { Ticket, TicketStatus, ToastMessage, OnboardingData, OffboardingData } f
 import { AppPage } from './types/catalog';
 import { api, USE_API } from './api/client';
 import { createInitialWorkflow } from './services/workflowEngine';
-import { can, canAccessPage, defaultPageForRole } from './auth/roles';
+import { can, canAccessPage, defaultPageForRole, ticketInScope } from './auth/roles';
 
 const POLL_MS = 8000;
 
@@ -59,13 +59,17 @@ const AppContent: React.FC = () => {
       if (!opts?.silent) setLoadingTickets(true);
       try {
         const data = await api.listAllTickets();
-        setTickets(data);
+        const scoped = data.filter((t) =>
+          ticketInScope(user.role, { email: user.email, name: user.name }, t),
+        );
+        setTickets(scoped);
         setSyncError(null);
         toastWarnedRef.current = false;
         const openId = selectedIdRef.current;
         if (openId) {
-          const fresh = data.find((t) => t.id === openId);
+          const fresh = scoped.find((t) => t.id === openId);
           if (fresh) setSelectedTicket(fresh);
+          else setSelectedTicket(null);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Falha ao sincronizar com o backend.';
@@ -82,7 +86,7 @@ const AppContent: React.FC = () => {
         if (!opts?.silent) setLoadingTickets(false);
       }
     },
-    [user?.isAuthenticated, addToast]
+    [user?.isAuthenticated, user?.role, user?.email, user?.name, addToast]
   );
 
   useEffect(() => {

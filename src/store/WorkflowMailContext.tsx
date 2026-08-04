@@ -53,7 +53,7 @@ export const WorkflowMailProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const pushRemote = useCallback(
     async (cfg: SmtpConfig) => {
-      if (!USE_API || !user?.isAuthenticated) return;
+      if (!USE_API || !user?.isAuthenticated || user.role !== 'admin') return;
       savingRef.current = true;
       try {
         await api.putSetting('smtp', cfg as unknown as Record<string, unknown>);
@@ -67,7 +67,7 @@ export const WorkflowMailProvider: React.FC<{ children: React.ReactNode }> = ({ 
         }, 800);
       }
     },
-    [user?.isAuthenticated]
+    [user?.isAuthenticated, user?.role]
   );
 
   const pullRemote = useCallback(async () => {
@@ -80,7 +80,7 @@ export const WorkflowMailProvider: React.FC<{ children: React.ReactNode }> = ({ 
         const merged = normalizeSmtp(remote.value);
         setSmtp(merged);
         saveSmtpConfig(merged);
-      } else if (!loadedOnce.current) {
+      } else if (!loadedOnce.current && user.role === 'admin') {
         const local = normalizeSmtp(loadSmtpConfig());
         await api.putSetting('smtp', local as unknown as Record<string, unknown>);
         setSmtp(local);
@@ -89,7 +89,7 @@ export const WorkflowMailProvider: React.FC<{ children: React.ReactNode }> = ({ 
     } catch (err) {
       console.warn('Falha ao carregar SMTP do banco:', err);
     }
-  }, [user?.isAuthenticated]);
+  }, [user?.isAuthenticated, user?.role]);
 
   // Só carrega uma vez no login — poll a cada 20s sobrescrevia o formulário (ex.: testMode)
   useEffect(() => {

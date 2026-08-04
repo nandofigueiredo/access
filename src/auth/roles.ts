@@ -34,7 +34,7 @@ export interface AccessProfile {
   featured?: boolean;
 }
 
-/** Catálogo exibido na tela de login */
+/** Catálogo exibido na tela de login / Usuários & Perfis */
 export const ACCESS_PROFILES: AccessProfile[] = [
   {
     role: 'admin',
@@ -60,10 +60,10 @@ export const ACCESS_PROFILES: AccessProfile[] = [
     description:
       'Opera a fila de onboarding e offboarding: assume chamados, executa checklist TI e finaliza demandas.',
     accessSummary: [
-      'Chamados e board workflow',
-      'Checklist e status',
+      'Fila completa de chamados',
+      'Checklist, status e board',
       'Abre integração N3',
-      'Relatórios e exportação',
+      'Relatórios, exportação e templates',
     ],
     color: '#1890ff',
   },
@@ -71,14 +71,14 @@ export const ACCESS_PROFILES: AccessProfile[] = [
     role: 'rh',
     title: 'Recursos Humanos',
     short: 'RH',
-    badge: 'Solicitante',
     description:
-      'Registra contratações e desligamentos. Acompanha o andamento sem alterar configuração do sistema.',
+      'Registra contratações e desligamentos. Acompanha o andamento de todos os chamados sem operar checklist TI nem configurar o sistema.',
+    badge: 'Solicitante',
     accessSummary: [
       'Novo onboarding / offboarding',
-      'Acompanhar chamados',
+      'Ver todos os chamados (leitura)',
       'Board e relatórios',
-      'Templates de notificação',
+      'Sem admin, export ou templates',
     ],
     color: '#13c2c2',
   },
@@ -88,12 +88,12 @@ export const ACCESS_PROFILES: AccessProfile[] = [
     short: 'Gestão',
     badge: 'Liderança',
     description:
-      'Acompanha solicitações da equipe e pode abrir onboarding de novos colaboradores sob sua gestão.',
+      'Abre onboarding da equipe e acompanha apenas os chamados em que é solicitante ou gestor indicado.',
     accessSummary: [
-      'Visualizar chamados',
       'Novo onboarding',
-      'Relatórios da operação',
-      'Sem exclusão ou config',
+      'Chamados do seu escopo',
+      'Board e relatórios filtrados',
+      'Sem offboarding, exclusão ou config',
     ],
     color: '#fa8c16',
   },
@@ -102,8 +102,9 @@ export const ACCESS_PROFILES: AccessProfile[] = [
     title: 'Visualizador',
     short: 'Leitura',
     badge: 'Somente leitura',
-    description: 'Consulta o andamento dos chamados sem criar, editar ou administrar o portal.',
-    accessSummary: ['Ver chamados', 'Consultar board', 'Sem alterações'],
+    description:
+      'Consulta somente os chamados que solicitou. Sem criar, editar ou administrar o portal.',
+    accessSummary: ['Ver próprios chamados', 'Consultar board/relatórios', 'Sem alterações'],
     color: '#8c8c8c',
   },
 ];
@@ -144,8 +145,6 @@ const ROLE_PERMISSIONS: Record<AccessRole, Permission[]> = {
     'tickets.create.offboarding',
     'workflow.board',
     'tools.reports',
-    'tools.export',
-    'tools.templates',
   ],
   gestor: [
     'tickets.view',
@@ -199,16 +198,7 @@ export const ROLE_PAGES: Record<AccessRole, AppPage[]> = {
     'tools-notifications',
     'tools-terms',
   ],
-  rh: [
-    'dashboard',
-    'onboarding',
-    'offboarding',
-    'tools-workflow',
-    'tools-reports',
-    'tools-export',
-    'tools-notifications',
-    'tools-terms',
-  ],
+  rh: ['dashboard', 'onboarding', 'offboarding', 'tools-workflow', 'tools-reports'],
   gestor: ['dashboard', 'onboarding', 'tools-workflow', 'tools-reports'],
   viewer: ['dashboard', 'tools-workflow', 'tools-reports'],
 };
@@ -234,6 +224,36 @@ export function defaultPageForRole(role: AccessRole | undefined | null): AppPage
 
 export function roleLabel(role: AccessRole | undefined | null): string {
   return getProfile(role).title;
+}
+
+/** Quem vê todos os chamados (sem filtro de solicitante/gestor). */
+export function seesAllTickets(role: AccessRole | undefined | null): boolean {
+  return role === 'admin' || role === 'ti' || role === 'rh';
+}
+
+/**
+ * Escopo de chamados no front (espelha o backend).
+ * admin/ti/rh: todos; gestor: solicitante ou gestor; viewer: só solicitante.
+ */
+export function ticketInScope(
+  role: AccessRole | undefined | null,
+  user: { email?: string; name?: string } | null | undefined,
+  ticket: { requesterEmail?: string | null; gestor?: string | null },
+): boolean {
+  if (!role) return false;
+  if (seesAllTickets(role)) return true;
+  const email = (user?.email || '').trim().toLowerCase();
+  const requester = (ticket.requesterEmail || '').trim().toLowerCase();
+  if (role === 'viewer') {
+    return Boolean(email) && requester === email;
+  }
+  if (role === 'gestor') {
+    if (email && requester === email) return true;
+    const name = (user?.name || '').trim().toLowerCase();
+    const manager = (ticket.gestor || '').trim().toLowerCase();
+    return Boolean(name) && Boolean(manager) && manager.includes(name);
+  }
+  return false;
 }
 
 /** Perfis de demonstração (login local) */

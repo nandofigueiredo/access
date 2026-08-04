@@ -12,7 +12,7 @@ import {
   ArrowUpDown,
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
-import { can } from '../auth/roles';
+import { can, ticketInScope } from '../auth/roles';
 
 interface DashboardProps {
   tickets: Ticket[];
@@ -66,6 +66,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const filteredTickets = useMemo(() => {
     return tickets.filter((ticket) => {
+      if (!ticketInScope(user?.role, { email: user?.email, name: user?.name }, ticket)) {
+        return false;
+      }
       const q = search.toLowerCase();
       const matchesSearch =
         !q ||
@@ -80,7 +83,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       const matchesStatus = statusFilter === 'all' || ticket.status === statusFilter;
       return matchesSearch && matchesType && matchesStatus;
     });
-  }, [tickets, search, typeFilter, statusFilter]);
+  }, [tickets, search, typeFilter, statusFilter, user?.role, user?.email, user?.name]);
 
   const totalPages = Math.max(1, Math.ceil(filteredTickets.length / pageSize));
   const currentPage = Math.min(page, totalPages);
