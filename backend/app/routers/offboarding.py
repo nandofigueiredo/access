@@ -112,7 +112,14 @@ async def create_offboarding(
         },
     )
 
-    await notify_glpi_on_create(db, row=row, kind="offboarding")
+    glpi = await notify_glpi_on_create(db, row=row, kind="offboarding")
+    await write_audit_log(
+        db,
+        action="GLPI_NOTIFY",
+        performed_by_user_id=current_user.id,
+        target_request_id=row.id,
+        details={"result": glpi},
+    )
 
     return _to_out(row, current_user.email)
 

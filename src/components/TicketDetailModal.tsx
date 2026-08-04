@@ -36,6 +36,7 @@ import { Ticket, TicketStatus, ToastMessage } from '../types';
 import { formatDateToBR, formatDateTimeToBR, evaluateOnboardingSLA } from '../utils/formatters';
 import { useAuth } from '../auth/AuthContext';
 import { can } from '../auth/roles';
+import { api, USE_API } from '../api/client';
 import { useCatalog } from '../store/CatalogContext';
 
 interface TicketDetailModalProps {
@@ -90,7 +91,26 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
     setItChecklist(buildChecklistState(catalogChecklist, ticket.itChecklist as Record<string, unknown> | undefined));
   }, [ticket.id, ticket.glpiTicketNumber, ticket.status, ticket.itNotes, ticket.itChecklist, catalogChecklist]);
 
+  const [glpiSending, setGlpiSending] = useState(false);
+
   const progress = useMemo(() => checklistProgress(itChecklist), [itChecklist]);
+
+  const handleResendGlpi = async () => {
+    if (!USE_API || !canEditTI) return;
+    setGlpiSending(true);
+    try {
+      const res = await api.notifyGlpi(ticket.id);
+      addToast({ type: 'success', title: 'E-mail GLPI', message: res.detail });
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Falha ao enviar ao GLPI',
+        message: err instanceof Error ? err.message : 'Não foi possível enviar o e-mail.',
+      });
+    } finally {
+      setGlpiSending(false);
+    }
+  };
 
   const catalogByKey = useMemo(() => {
     const map = new Map<string, (typeof catalogChecklist)[0]>();
@@ -382,6 +402,16 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
               (marcador [PORTAL:…]), em até ~1 minuto. Se ainda estiver vazio, o Service Desk
               pode digitar aqui e salvar.
             </p>
+            {canEditTI && USE_API && (
+              <button
+                type="button"
+                disabled={glpiSending}
+                onClick={() => void handleResendGlpi()}
+                className="mt-1 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-violet-200 bg-violet-50 text-violet-800 hover:bg-violet-100 disabled:opacity-60"
+              >
+                {glpiSending ? 'Enviando…' : 'Reenviar e-mail de abertura ao GLPI'}
+              </button>
+            )}
           </div>
 
           {/* ONBOARDING DATA */}

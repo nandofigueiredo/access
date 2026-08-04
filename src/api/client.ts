@@ -182,6 +182,9 @@ export const api = {
       body: JSON.stringify({ status, ...extra }),
     }),
 
+  notifyGlpi: (id: string) =>
+    apiFetch<{ detail: string }>(`/requests/${id}/notify-glpi`, { method: 'POST' }),
+
   deleteOnboarding: (id: string) => apiFetch<void>(`/onboarding/${id}`, { method: 'DELETE' }),
 
   deleteOffboarding: (id: string) => apiFetch<void>(`/offboarding/${id}`, { method: 'DELETE' }),

@@ -29,10 +29,13 @@ async def send_smtp_email(
     subject: str,
     body: str,
     reply_to: str | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """
     Envia e-mail via SMTP configurado em settings.
-    Se enabled=false ou testMode=true: não envia, retorna status simulated.
+    Se enabled=false: não envia.
+    Se testMode=true e force=false: simula (não envia).
+    force=true: envia de verdade mesmo com testMode (ex.: abertura GLPI).
     """
     cfg = await load_smtp_config(db)
     recipients = [t.strip() for t in to if t and "@" in t]
@@ -45,9 +48,19 @@ async def send_smtp_email(
     from_name = str(cfg.get("fromName") or "Portal TI diRoma")
     reply = reply_to or cfg.get("replyTo") or from_email
 
-    if not enabled or test_mode:
+    if not enabled:
+        logger.warning("SMTP desabilitado — não enviou → %s | %s", ", ".join(recipients), subject[:120])
+        return {
+            "ok": False,
+            "status": "disabled",
+            "error": "SMTP desabilitado nas configurações.",
+            "to": recipients,
+            "subject": subject,
+        }
+
+    if test_mode and not force:
         logger.info(
-            "SMTP simulado → %s | %s",
+            "SMTP simulado (testMode) → %s | %s",
             ", ".join(recipients),
             subject[:120],
         )
@@ -88,6 +101,7 @@ async def send_smtp_email(
             start_tls=not secure and port in (587, 25, 2587),
             use_tls=secure,
         )
+        logger.info("SMTP enviado → %s | %s", ", ".join(recipients), subject[:120])
         return {"ok": True, "status": "sent", "to": recipients, "subject": subject}
     except Exception as exc:  # noqa: BLE001
         logger.exception("Falha SMTP")

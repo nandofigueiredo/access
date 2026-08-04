@@ -12,8 +12,9 @@ from app.database import get_db
 from app.models.offboarding import OffboardingRequest
 from app.models.onboarding import OnboardingRequest
 from app.models.user import User
-from app.schemas import StatusUpdate, StatusUpdateOut
+from app.schemas import MessageOut, StatusUpdate, StatusUpdateOut
 from app.services.audit import write_audit_log
+from app.services.glpi_notify import notify_glpi_on_create
 from app.services.sanitizer import sanitize_dict, sanitize_email, sanitize_text
 
 router = APIRouter(prefix="/requests", tags=["Requests"])
@@ -115,4 +116,53 @@ async def update_request_status(
         requesterEmail=row.requester_email,
         assignedQueue=row.assigned_queue,
         glpiTicketNumber=row.glpi_ticket_number,
+    )
+
+
+@router.post("/{ticket_id}/notify-glpi", response_model=MessageOut)
+async def resend_glpi_notify(
+    ticket_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MessageOut:
+    """Reenvia e-mail de abertura ao GLPI (útil se o collector não recebeu na criação)."""
+    if current_user.role not in {"admin", "ti"}:
+        raise HTTPException(status_code=403, detail="Sem permissão.")
+
+    row: OnboardingRequest | OffboardingRequest | None = None
+    kind = "onboarding"
+    tid = ticket_id.strip().upper()
+    if tid.startswith("ONB"):
+        result = await db.execute(select(OnboardingRequest).where(OnboardingRequest.id == tid))
+        row = result.scalar_one_or_none()
+        kind = "onboarding"
+    elif tid.startswith("OFF"):
+        result = await db.execute(select(OffboardingRequest).where(OffboardingRequest.id == tid))
+        row = result.scalar_one_or_none()
+        kind = "offboarding"
+    else:
+        raise HTTPException(status_code=422, detail="ID inválido.")
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Chamado não encontrado.")
+
+    notify = await notify_glpi_on_create(db, row=row, kind=kind)
+    await write_audit_log(
+        db,
+        action="GLPI_NOTIFY_RESEND",
+        performed_by_user_id=current_user.id,
+        target_request_id=row.id,
+        details={"result": notify},
+    )
+
+    status_s = str(notify.get("status") or "failed")
+    if notify.get("ok") and status_s == "sent":
+        return MessageOut(detail=f"E-mail enviado ao GLPI ({', '.join(notify.get('to') or [])}).")
+    if status_s == "skipped":
+        return MessageOut(detail=f"Envio ignorado: {notify.get('reason') or 'glpi desabilitado'}.")
+    if status_s == "disabled":
+        raise HTTPException(status_code=422, detail="SMTP desabilitado. Habilite em Configuração → SMTP.")
+    raise HTTPException(
+        status_code=422,
+        detail=str(notify.get("error") or f"Falha no envio SMTP ({status_s})."),
     )

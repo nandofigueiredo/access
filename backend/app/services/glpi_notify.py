@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -10,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.offboarding import OffboardingRequest
 from app.models.onboarding import OnboardingRequest
 from app.services.email_smtp import load_smtp_config, send_smtp_email
+
+logger = logging.getLogger(__name__)
 
 PORTAL_ID_RE = re.compile(r"\[PORTAL:((?:ONB|OFF)-\d{4}-\d+)\]", re.IGNORECASE)
 PORTAL_ID_LOOSE_RE = re.compile(r"\b((?:ONB|OFF)-\d{4}-\d+)\b", re.IGNORECASE)
@@ -96,6 +99,7 @@ async def notify_glpi_on_create(
 ) -> dict[str, Any]:
     cfg = await load_smtp_config(db)
     if not bool(cfg.get("glpiEnabled", True)):
+        logger.warning("GLPI notify skipped: glpiEnabled=false (%s)", getattr(row, "id", "?"))
         return {"ok": True, "status": "skipped", "reason": "glpiEnabled=false"}
 
     inbox = str(cfg.get("glpiInbox") or "glpi@diroma.com.br").strip()
@@ -106,10 +110,20 @@ async def notify_glpi_on_create(
     else:
         return {"ok": False, "status": "failed", "error": "Tipo inválido"}
 
-    return await send_smtp_email(
+    # force=True: abertura no GLPI precisa de e-mail real mesmo com Modo teste ligado
+    result = await send_smtp_email(
         db,
         to=[inbox],
         subject=subject,
         body=body,
         reply_to=str(cfg.get("replyTo") or cfg.get("fromEmail") or ""),
+        force=True,
     )
+    logger.info(
+        "GLPI notify %s → %s status=%s error=%s",
+        getattr(row, "id", "?"),
+        inbox,
+        result.get("status"),
+        result.get("error"),
+    )
+    return result

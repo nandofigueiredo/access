@@ -154,18 +154,13 @@ const AppContent: React.FC = () => {
         ticketId: created.id,
       });
       if (smtp.glpiEnabled !== false && smtp.glpiInbox) {
+        // O e-mail real ao GLPI é enviado pelo backend (notify_glpi_on_create).
         sendMail({
           to: [smtp.glpiInbox],
           subject: `[PORTAL:${created.id}] ${created.type === 'onboarding' ? 'Onboarding' : 'Offboarding'} — ${created.nomeCompleto}`,
           body:
-            `Abertura automática de chamado GLPI — Portal TI diRoma\n\n` +
-            `Marcador: [PORTAL:${created.id}]\n` +
-            `ID Portal: ${created.id}\n` +
-            `Tipo: ${created.type}\n` +
-            `Colaborador: ${created.nomeCompleto}\n` +
-            `Solicitante: ${actor}\n` +
-            `Fila: ${created.assignedQueue || 'Service Desk N1'}\n\n` +
-            `Responda com o número do chamado (ex.: Ticket #12345) mantendo [PORTAL:${created.id}] no assunto.`,
+            `Pedido de abertura GLPI — o backend envia o SMTP real para ${smtp.glpiInbox}.\n` +
+            `Marcador: [PORTAL:${created.id}]`,
           template: 'ticket_created_glpi',
           ticketId: created.id,
         });
@@ -182,9 +177,10 @@ const AppContent: React.FC = () => {
       addToast({
         type: 'success',
         title: 'Salvo no banco',
-        message: smtp.glpiEnabled !== false
-          ? `${created.id} criado. E-mail enviado ao GLPI (${smtp.glpiInbox || 'glpi@diroma.com.br'}).`
-          : `${created.id} criado e sincronizado.`,
+        message:
+          smtp.glpiEnabled !== false
+            ? `${created.id} criado. E-mail de abertura ao GLPI sai pelo SMTP do servidor (mesmo com Modo teste). Confira se SMTP está Habilitado.`
+            : `${created.id} criado e sincronizado.`,
       });
       setActiveTab('tools-workflow');
       void refreshTickets({ silent: true });
