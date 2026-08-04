@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { OutboundEmailLog, SmtpConfig } from '../types/workflow';
+import { DEFAULT_SMTP, OutboundEmailLog, SmtpConfig } from '../types/workflow';
 import {
   loadEmailLog,
   loadSmtpConfig,
@@ -9,12 +9,10 @@ import {
 import { api, USE_API } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 
-const POLL_MS = 20000;
-
 interface WorkflowMailContextValue {
   smtp: SmtpConfig;
   emailLog: OutboundEmailLog[];
-  saveSmtp: (cfg: SmtpConfig) => void;
+  saveSmtp: (cfg: SmtpConfig) => Promise<void>;
   sendMail: (params: {
     to: string[];
     subject: string;
@@ -27,23 +25,46 @@ interface WorkflowMailContextValue {
 
 const Ctx = createContext<WorkflowMailContextValue | undefined>(undefined);
 
-function isSmtp(value: unknown): value is SmtpConfig {
+function isSmtp(value: unknown): value is Partial<SmtpConfig> {
   return Boolean(value && typeof value === 'object' && 'host' in (value as object));
+}
+
+function normalizeSmtp(raw: Partial<SmtpConfig>): SmtpConfig {
+  const merged = { ...DEFAULT_SMTP, ...raw };
+  return {
+    ...merged,
+    enabled: Boolean(merged.enabled),
+    secure: Boolean(merged.secure),
+    glpiEnabled: merged.glpiEnabled !== false,
+    notifyRequesterOnCreate: merged.notifyRequesterOnCreate !== false,
+    notifyRequesterOnClose: merged.notifyRequesterOnClose !== false,
+    notifyEndUserOnComplete: merged.notifyEndUserOnComplete !== false,
+    // false precisa sobreviver: Boolean(false) === false
+    testMode: Boolean(merged.testMode),
+  };
 }
 
 export const WorkflowMailProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
-  const [smtp, setSmtp] = useState<SmtpConfig>(() => loadSmtpConfig());
+  const [smtp, setSmtp] = useState<SmtpConfig>(() => normalizeSmtp(loadSmtpConfig()));
   const [emailLog, setEmailLog] = useState<OutboundEmailLog[]>(() => loadEmailLog());
-  const saveTimer = useRef<number | null>(null);
+  const savingRef = useRef(false);
+  const loadedOnce = useRef(false);
 
   const pushRemote = useCallback(
     async (cfg: SmtpConfig) => {
       if (!USE_API || !user?.isAuthenticated) return;
+      savingRef.current = true;
       try {
         await api.putSetting('smtp', cfg as unknown as Record<string, unknown>);
       } catch (err) {
         console.warn('Falha ao gravar SMTP no banco:', err);
+        throw err;
+      } finally {
+        // Pequeno atraso para ignorar GET stale logo após o PUT
+        window.setTimeout(() => {
+          savingRef.current = false;
+        }, 800);
       }
     },
     [user?.isAuthenticated]
@@ -51,36 +72,38 @@ export const WorkflowMailProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const pullRemote = useCallback(async () => {
     if (!USE_API || !user?.isAuthenticated) return;
+    if (savingRef.current) return;
     try {
       const remote = await api.getSetting('smtp');
       if (isSmtp(remote.value) && Object.keys(remote.value).length > 0) {
-        const merged = { ...loadSmtpConfig(), ...remote.value };
+        // Banco é a fonte da verdade — não misturar localStorage por cima do remote
+        const merged = normalizeSmtp(remote.value);
         setSmtp(merged);
         saveSmtpConfig(merged);
-      } else {
-        const local = loadSmtpConfig();
+      } else if (!loadedOnce.current) {
+        const local = normalizeSmtp(loadSmtpConfig());
         await api.putSetting('smtp', local as unknown as Record<string, unknown>);
+        setSmtp(local);
       }
+      loadedOnce.current = true;
     } catch (err) {
       console.warn('Falha ao carregar SMTP do banco:', err);
     }
   }, [user?.isAuthenticated]);
 
+  // Só carrega uma vez no login — poll a cada 20s sobrescrevia o formulário (ex.: testMode)
   useEffect(() => {
     if (!user?.isAuthenticated) return;
+    loadedOnce.current = false;
     void pullRemote();
-    const timer = window.setInterval(() => void pullRemote(), POLL_MS);
-    return () => window.clearInterval(timer);
   }, [user?.isAuthenticated, pullRemote]);
 
   const saveSmtp = useCallback(
-    (cfg: SmtpConfig) => {
-      saveSmtpConfig(cfg);
-      setSmtp(cfg);
-      if (saveTimer.current) window.clearTimeout(saveTimer.current);
-      saveTimer.current = window.setTimeout(() => {
-        void pushRemote(cfg);
-      }, 400);
+    async (cfg: SmtpConfig) => {
+      const normalized = normalizeSmtp(cfg);
+      saveSmtpConfig(normalized);
+      setSmtp(normalized);
+      await pushRemote(normalized);
     },
     [pushRemote]
   );

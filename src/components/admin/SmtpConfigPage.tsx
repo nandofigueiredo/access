@@ -15,26 +15,46 @@ export const SmtpConfigPage: React.FC<Props> = ({ addToast }) => {
   const [form, setForm] = useState<SmtpConfig>(smtp);
   const [showPass, setShowPass] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
 
   React.useEffect(() => {
-    setForm({ ...smtp, glpiInbox: smtp.glpiInbox || 'glpi@diroma.com.br', glpiEnabled: smtp.glpiEnabled !== false });
-  }, [smtp]);
+    if (dirty) return;
+    setForm({
+      ...smtp,
+      glpiInbox: smtp.glpiInbox || 'glpi@diroma.com.br',
+      glpiEnabled: smtp.glpiEnabled !== false,
+    });
+  }, [smtp, dirty]);
 
-  const set = <K extends keyof SmtpConfig>(key: K, value: SmtpConfig[K]) =>
+  const set = <K extends keyof SmtpConfig>(key: K, value: SmtpConfig[K]) => {
+    setDirty(true);
     setForm((f) => ({ ...f, [key]: value }));
+  };
 
-  const handleSave = () => {
-    saveSmtp(form);
-    addToast({ type: 'success', title: 'SMTP salvo', message: 'Configuração do workflow de e-mail atualizada.' });
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await saveSmtp(form);
+      setDirty(false);
+      addToast({ type: 'success', title: 'SMTP salvo', message: 'Configuração do workflow de e-mail atualizada.' });
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Falha ao salvar SMTP',
+        message: err instanceof Error ? err.message : 'Não foi possível gravar no servidor.',
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleTest = async () => {
-    saveSmtp(form);
     setTesting(true);
     try {
+      await saveSmtp(form);
+      setDirty(false);
       if (USE_API) {
-        // Garante que o banco tem a config antes do teste real
-        await api.putSetting('smtp', form as unknown as Record<string, unknown>);
         const result = await api.testSmtp();
         sendMail({
           to: result.to?.length ? result.to : [form.serviceDeskInbox || form.fromEmail],
@@ -192,8 +212,13 @@ export const SmtpConfigPage: React.FC<Props> = ({ addToast }) => {
           </div>
 
           <div className="flex flex-wrap gap-2 pt-2">
-            <button type="button" onClick={handleSave} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white bg-[#002d5b] hover:bg-[#001529]">
-              <ShieldCheck className="w-4 h-4" /> Salvar SMTP
+            <button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={saving || testing}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white bg-[#002d5b] hover:bg-[#001529] disabled:opacity-60"
+            >
+              <ShieldCheck className="w-4 h-4" /> {saving ? 'Salvando…' : 'Salvar SMTP'}
             </button>
             <button
               type="button"
