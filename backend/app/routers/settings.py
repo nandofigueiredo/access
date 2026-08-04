@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -19,6 +21,7 @@ from app.services.email_smtp import send_smtp_email
 router = APIRouter(prefix="/settings", tags=["Settings"])
 
 ALLOWED_KEYS = {"catalog", "smtp"}
+_BR_TZ = ZoneInfo("America/Sao_Paulo")
 
 
 @router.post("/smtp/test", response_model=SmtpTestOut)
@@ -37,6 +40,7 @@ async def test_smtp(
     if not to_addr or "@" not in to_addr:
         raise HTTPException(status_code=422, detail="Defina Service Desk ou e-mail remetente antes do teste.")
 
+    agora = datetime.now(_BR_TZ).strftime("%d/%m/%Y %H:%M:%S")
     send_result = await send_smtp_email(
         db,
         to=[to_addr],
@@ -44,7 +48,7 @@ async def test_smtp(
         body=(
             f"Teste de envio SMTP do Portal TI.\n"
             f"Usuário: {current_user.email}\n"
-            f"Horário: {__import__('datetime').datetime.now().isoformat()}\n"
+            f"Horário: {agora}\n"
             f"Modo teste na config: {bool(cfg.get('testMode', True))}\n"
             f"SMTP enabled: {bool(cfg.get('enabled'))}\n"
         ),
