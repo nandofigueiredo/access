@@ -3,6 +3,7 @@ import { Plus, Pencil, Trash2, Search, ToggleLeft, ToggleRight } from 'lucide-re
 import { CatalogItem } from '../../types/catalog';
 import { ToastMessage } from '../../types';
 import { ACCESS_PROFILES, AccessRole, getProfile, roleLabel } from '../../auth/roles';
+import { CHECKLIST_TEAMS, ChecklistTeam } from '../../services/checklistTeams';
 
 interface CatalogCrudPageProps {
   title: string;
@@ -14,6 +15,8 @@ interface CatalogCrudPageProps {
   showDescription?: boolean;
   /** Cadastro de operadores com seleção de perfil de acesso */
   enableAccessRole?: boolean;
+  /** Itens de checklist TI com equipe padrão */
+  enableChecklistTeam?: boolean;
 }
 
 function newId() {
@@ -42,6 +45,7 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
   addToast,
   showDescription = true,
   enableAccessRole = false,
+  enableChecklistTeam = false,
 }) => {
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<CatalogItem | null>(null);
@@ -50,6 +54,8 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<AccessRole>('ti');
   const [active, setActive] = useState(true);
+  const [checklistTeam, setChecklistTeam] = useState<ChecklistTeam>('service_desk');
+  const [checklistKey, setChecklistKey] = useState('');
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
@@ -75,6 +81,8 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
     setEmail('');
     setRole('ti');
     setActive(true);
+    setChecklistTeam('service_desk');
+    setChecklistKey('');
   };
 
   const openEdit = (item: CatalogItem) => {
@@ -85,6 +93,13 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
     setEmail(mail);
     setRole(roleFromMeta(item));
     setActive(item.active);
+    const team = item.meta?.team;
+    setChecklistTeam(
+      team === 'n3_infra_security' || team === 'n3_networks' || team === 'service_desk'
+        ? team
+        : 'service_desk'
+    );
+    setChecklistKey(typeof item.meta?.key === 'string' ? item.meta.key : '');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -167,7 +182,16 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
       description: description.trim() || undefined,
       active,
       sortOrder: editing?.sortOrder ?? items.length + 1,
-      meta: editing?.meta,
+      meta: enableChecklistTeam
+        ? {
+            ...(editing?.meta || {}),
+            key:
+              checklistKey.trim() ||
+              (typeof editing?.meta?.key === 'string' ? editing.meta.key : '') ||
+              `chk_${(editing?.id || Date.now()).toString().replace(/\W/g, '').slice(-10)}`,
+            team: checklistTeam,
+          }
+        : editing?.meta,
     };
     try {
       await onSave(payload);
@@ -283,6 +307,41 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
             </>
           )}
 
+          {enableChecklistTeam && (
+            <>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                  Equipe responsável (padrão)
+                </label>
+                <select
+                  value={checklistTeam}
+                  onChange={(e) => setChecklistTeam(e.target.value as ChecklistTeam)}
+                  className="w-full border border-slate-200 rounded-sm px-2.5 py-2 text-[13px] focus:outline-none focus:border-[#1890ff] bg-white"
+                >
+                  {CHECKLIST_TEAMS.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  No chamado, o Service Desk pode reatribuir item a item.
+                </p>
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                  Chave técnica (opcional)
+                </label>
+                <input
+                  value={checklistKey}
+                  onChange={(e) => setChecklistKey(e.target.value)}
+                  className="w-full border border-slate-200 rounded-sm px-2.5 py-2 text-[13px] font-mono focus:outline-none focus:border-[#1890ff]"
+                  placeholder="ex: contaEntraIdCriada"
+                />
+              </div>
+            </>
+          )}
+
           {showDescription && !enableAccessRole && (
             <div>
               <label className="block text-[11px] font-semibold text-slate-600 mb-1">Descrição</label>
@@ -365,7 +424,20 @@ export const CatalogCrudPage: React.FC<CatalogCrudPageProps> = ({
                             </td>
                           </>
                         ) : (
-                          <td className="py-2.5 px-3 text-slate-500">{item.description || '—'}</td>
+                          <td className="py-2.5 px-3 text-slate-500">
+                            {enableChecklistTeam ? (
+                              <span className="inline-flex flex-wrap gap-1.5 items-center">
+                                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-600">
+                                  {typeof item.meta?.team === 'string'
+                                    ? CHECKLIST_TEAMS.find((t) => t.id === item.meta?.team)?.short || String(item.meta.team)
+                                    : 'SD'}
+                                </span>
+                                {item.description || null}
+                              </span>
+                            ) : (
+                              item.description || '—'
+                            )}
+                          </td>
                         )}
                         <td className="py-2.5 px-3">
                           <button type="button" onClick={() => toggleActive(item)} className="inline-flex items-center gap-1 text-[11px]">

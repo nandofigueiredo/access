@@ -81,14 +81,13 @@ export interface OnboardingData {
   // LGPD
   lgpdAceito: boolean;
   
-  // IT Checklist
-  itChecklist?: {
-    hardwareProvisionado: boolean;
-    contaEntraIdCriada: boolean;
-    sistemasLiberados: boolean;
-    crachaSolicitado: boolean;
-    termoEnviado: boolean;
-  };
+  // IT Checklist (boolean legado ou { done, team, doneBy, doneAt })
+  itChecklist?: Record<string, boolean | {
+    done: boolean;
+    team?: string;
+    doneBy?: string;
+    doneAt?: string;
+  }>;
   itNotes?: string;
   /** Workflow multiárea */
   workflow?: TicketWorkflow;
@@ -132,14 +131,12 @@ export interface OffboardingData {
   prazoLimiteDevolucao: string;
 
   // 4. Checklist de Encerramento (Uso Exclusivo TI)
-  itChecklist: {
-    bloqueioIdP: boolean;
-    encerramentoSessoes: boolean;
-    desvinculacaoLicencas: boolean;
-    remocaoGruposEmail: boolean;
-    limpezaWipeMDM: boolean;
-    registroLogsAuditoria: boolean;
-  };
+  itChecklist: Record<string, boolean | {
+    done: boolean;
+    team?: string;
+    doneBy?: string;
+    doneAt?: string;
+  }>;
   itNotes?: string;
   workflow?: TicketWorkflow;
   requesterEmail?: string;

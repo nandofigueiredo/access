@@ -99,9 +99,29 @@ export const AdminRouter: React.FC<Props> = ({ page, addToast, tickets, onOpenEn
     case 'config-systems':
       return crud('specificSystems', 'Sistemas & Acessos', 'Sistemas liberados no onboarding.');
     case 'config-checklist-onb':
-      return crud('onboardingChecklist', 'Checklist TI — Onboarding', 'Itens do Service Desk no onboarding.');
+      return (
+        <CatalogCrudPage
+          title="Checklist TI — Onboarding"
+          subtitle="Itens do atendimento. Defina a equipe padrão (SD, N3 Infra ou N3 Redes). No chamado, o SD pode reatribuir."
+          items={catalog.onboardingChecklist}
+          onSave={(item) => upsertItem('onboardingChecklist', item)}
+          onDelete={(id) => removeItem('onboardingChecklist', id)}
+          addToast={addToast}
+          enableChecklistTeam
+        />
+      );
     case 'config-checklist-off':
-      return crud('offboardingChecklist', 'Checklist TI — Offboarding', 'Itens do Service Desk no offboarding.');
+      return (
+        <CatalogCrudPage
+          title="Checklist TI — Offboarding"
+          subtitle="Itens do encerramento. Equipe padrão por item; SD atribui no chamado."
+          items={catalog.offboardingChecklist}
+          onSave={(item) => upsertItem('offboardingChecklist', item)}
+          onDelete={(id) => removeItem('offboardingChecklist', id)}
+          addToast={addToast}
+          enableChecklistTeam
+        />
+      );
     case 'config-statuses':
       return crud('ticketStatuses', 'Status & Workflow', 'Status possíveis dos pedidos.');
     case 'config-assets':

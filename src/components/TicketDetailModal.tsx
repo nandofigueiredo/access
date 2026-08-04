@@ -16,11 +16,27 @@ import {
 } from 'lucide-react';
 import { WorkflowPanel } from './WorkflowPanel';
 import { createInitialWorkflow } from '../services/workflowEngine';
-import React, { useEffect, useState } from 'react';
+import {
+  buildChecklistState,
+  canAssignChecklistTeam,
+  canToggleChecklistItem,
+  CHECKLIST_TEAMS,
+  ChecklistTeam,
+  checklistKeyOf,
+  checklistProgress,
+  ensureHandoffsForAssignedTeams,
+  ItChecklistMap,
+  ChecklistItemState,
+  markTeamItemsDone,
+  teamLabel,
+  teamShort,
+} from '../services/checklistTeams';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Ticket, TicketStatus, ToastMessage } from '../types';
 import { formatDateToBR, formatDateTimeToBR, evaluateOnboardingSLA } from '../utils/formatters';
 import { useAuth } from '../auth/AuthContext';
 import { can } from '../auth/roles';
+import { useCatalog } from '../store/CatalogContext';
 
 interface TicketDetailModalProps {
   ticket: Ticket;
@@ -38,9 +54,16 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
   onPrintTerm,
 }) => {
   const { user } = useAuth();
+  const { catalog } = useCatalog();
   const canEditTI = can(user?.role, 'tickets.checklist') || can(user?.role, 'tickets.updateStatus');
+  const canSD = can(user?.role, 'workflow.serviceDesk');
+  const canN3 = can(user?.role, 'workflow.n3');
+  const canAssign = canAssignChecklistTeam(canSD);
   const isOnboarding = ticket.type === 'onboarding';
   const [activePanel, setActivePanel] = useState<'workflow' | 'dados' | 'checklist'>('workflow');
+  const actor = user?.email || user?.name || 'operador';
+
+  const catalogChecklist = isOnboarding ? catalog.onboardingChecklist : catalog.offboardingChecklist;
 
   useEffect(() => {
     if (!ticket.workflow) {
@@ -52,24 +75,8 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticket.id]);
 
-  // Local state for IT Checklist
-  const [itChecklist, setItChecklist] = useState<any>(
-    ticket.itChecklist || (isOnboarding
-      ? {
-          hardwareProvisionado: false,
-          contaEntraIdCriada: false,
-          sistemasLiberados: false,
-          crachaSolicitado: false,
-          termoEnviado: false,
-        }
-      : {
-          bloqueioIdP: false,
-          encerramentoSessoes: false,
-          desvinculacaoLicencas: false,
-          remocaoGruposEmail: false,
-          limpezaWipeMDM: false,
-          registroLogsAuditoria: false,
-        })
+  const [itChecklist, setItChecklist] = useState<ItChecklistMap>(() =>
+    buildChecklistState(catalogChecklist, ticket.itChecklist as Record<string, unknown> | undefined)
   );
 
   const [itNotes, setItNotes] = useState(ticket.itNotes || '');
@@ -80,13 +87,76 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
     setGlpiTicketNumber(ticket.glpiTicketNumber || '');
     setStatus(ticket.status);
     setItNotes(ticket.itNotes || '');
-  }, [ticket.id, ticket.glpiTicketNumber, ticket.status, ticket.itNotes]);
+    setItChecklist(buildChecklistState(catalogChecklist, ticket.itChecklist as Record<string, unknown> | undefined));
+  }, [ticket.id, ticket.glpiTicketNumber, ticket.status, ticket.itNotes, ticket.itChecklist, catalogChecklist]);
+
+  const progress = useMemo(() => checklistProgress(itChecklist), [itChecklist]);
+
+  const catalogByKey = useMemo(() => {
+    const map = new Map<string, (typeof catalogChecklist)[0]>();
+    for (const item of catalogChecklist) {
+      map.set(checklistKeyOf(item), item);
+    }
+    return map;
+  }, [catalogChecklist]);
 
   const toggleChecklist = (key: string) => {
-    setItChecklist((prev: any) => ({
+    const item = itChecklist[key];
+    if (!item) return;
+    if (!canToggleChecklistItem({ canServiceDesk: canSD, canN3, itemTeam: item.team })) {
+      addToast({
+        type: 'warning',
+        title: 'Sem permissão',
+        message: `Este item está atribuído a ${teamLabel(item.team)}.`,
+      });
+      return;
+    }
+    setItChecklist((prev) => ({
       ...prev,
-      [key]: !prev[key],
+      [key]: {
+        ...prev[key],
+        done: !prev[key].done,
+        doneBy: !prev[key].done ? actor : undefined,
+        doneAt: !prev[key].done ? new Date().toISOString() : undefined,
+      },
     }));
+  };
+
+  const assignTeam = (key: string, team: ChecklistTeam) => {
+    if (!canAssign) return;
+    setItChecklist((prev) => ({
+      ...prev,
+      [key]: { ...prev[key], team },
+    }));
+  };
+
+  const assignAllToSd = () => {
+    if (!canAssign) return;
+    setItChecklist((prev) => {
+      const next: ItChecklistMap = {};
+      for (const key of Object.keys(prev)) {
+        next[key] = { ...prev[key], team: 'service_desk' };
+      }
+      return next;
+    });
+    addToast({
+      type: 'info',
+      title: 'Atribuição',
+      message: 'Todos os itens atribuídos ao Service Desk (execução solo).',
+    });
+  };
+
+  const finishMyTeamPart = (team: ChecklistTeam) => {
+    if (!canToggleChecklistItem({ canServiceDesk: canSD, canN3, itemTeam: team })) {
+      addToast({ type: 'warning', title: 'Sem permissão', message: 'Você não opera esta equipe.' });
+      return;
+    }
+    setItChecklist((prev) => markTeamItemsDone(prev, team, actor));
+    addToast({
+      type: 'success',
+      title: 'Parte da equipe concluída',
+      message: `${teamLabel(team)}: itens marcados como feitos.`,
+    });
   };
 
   const handleSaveITChanges = () => {
@@ -98,12 +168,19 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
       });
       return;
     }
+
+    let workflow = ticket.workflow || createInitialWorkflow(ticket.createdBy);
+    if (canSD) {
+      workflow = ensureHandoffsForAssignedTeams(workflow, itChecklist, actor);
+    }
+
     const updatedTicket: Ticket = {
       ...ticket,
       status,
       itChecklist,
       itNotes,
       glpiTicketNumber: glpiTicketNumber.trim() || undefined,
+      workflow,
       updatedAt: new Date().toISOString(),
     };
 
@@ -285,7 +362,8 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
               </p>
             )}
             <p className="text-[11px] text-slate-500">
-              Preenchido automaticamente quando o GLPI responde (webhook) ou manualmente pelo Service Desk.
+              O e-mail ao GLPI abre o chamado, mas o número só volta automaticamente se o webhook estiver
+              configurado. Enquanto isso, o Service Desk pode digitar o nº aqui e salvar.
             </p>
           </div>
 
@@ -471,128 +549,116 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
 
           {activePanel === 'checklist' && (
             <>
-          {/* INTERACTIVE IT CHECKLIST */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-            <h4 className="font-bold text-slate-900 text-xs flex items-center gap-2 border-b border-slate-200 pb-2">
-              <CheckSquare className="w-4 h-4 text-emerald-600" />
-              Checklist de Atendimento Técnico (Uso Exclusivo da TI)
-            </h4>
-
-            {isOnboarding ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <label className="flex items-center gap-2.5 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-slate-300 transition">
-                  <input
-                    type="checkbox"
-                    checked={!!itChecklist.hardwareProvisionado}
-                    onChange={() => toggleChecklist('hardwareProvisionado')}
-                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span className="text-slate-800 font-medium">Notebook/Hardware Formatado e Preparado</span>
-                </label>
-
-                <label className="flex items-center gap-2.5 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-slate-300 transition">
-                  <input
-                    type="checkbox"
-                    checked={!!itChecklist.contaEntraIdCriada}
-                    onChange={() => toggleChecklist('contaEntraIdCriada')}
-                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span className="text-slate-800 font-medium">Conta criada no Microsoft Entra ID</span>
-                </label>
-
-                <label className="flex items-center gap-2.5 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-slate-300 transition">
-                  <input
-                    type="checkbox"
-                    checked={!!itChecklist.sistemasLiberados}
-                    onChange={() => toggleChecklist('sistemasLiberados')}
-                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span className="text-slate-800 font-medium">Licenças e Sistemas Atribuídos</span>
-                </label>
-
-                <label className="flex items-center gap-2.5 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-slate-300 transition">
-                  <input
-                    type="checkbox"
-                    checked={!!itChecklist.crachaSolicitado}
-                    onChange={() => toggleChecklist('crachaSolicitado')}
-                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span className="text-slate-800 font-medium">Crachá Físico Solicitado / Catraca Ok</span>
-                </label>
-
-                <label className="flex items-center gap-2.5 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-slate-300 transition col-span-2">
-                  <input
-                    type="checkbox"
-                    checked={!!itChecklist.termoEnviado}
-                    onChange={() => toggleChecklist('termoEnviado')}
-                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span className="text-slate-800 font-medium">Termo de Responsabilidade e Ficha LGPD emitida para assinatura</span>
-                </label>
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 border-b border-slate-200 pb-2">
+              <div>
+                <h4 className="font-bold text-slate-900 text-xs flex items-center gap-2">
+                  <CheckSquare className="w-4 h-4 text-emerald-600" />
+                  Checklist TI por equipe
+                </h4>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Service Desk atribui cada item. SD pode executar tudo sozinho ou abrir N3.
+                  Cada equipe conclui só a sua parte. Progresso: {progress.done}/{progress.total}
+                </p>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <label className="flex items-center gap-2.5 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-slate-300 transition">
-                  <input
-                    type="checkbox"
-                    checked={!!itChecklist.bloqueioIdP}
-                    onChange={() => toggleChecklist('bloqueioIdP')}
-                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span className="text-slate-800 font-medium">Bloqueio efetuado no Entra ID / SSO</span>
-                </label>
+              {canAssign && (
+                <button
+                  type="button"
+                  onClick={assignAllToSd}
+                  className="text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100"
+                >
+                  Atribuir tudo ao SD
+                </button>
+              )}
+            </div>
 
-                <label className="flex items-center gap-2.5 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-slate-300 transition">
-                  <input
-                    type="checkbox"
-                    checked={!!itChecklist.encerramentoSessoes}
-                    onChange={() => toggleChecklist('encerramentoSessoes')}
-                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span className="text-slate-800 font-medium">Sessões encerradas em dispositivos móveis</span>
-                </label>
+            <div className="flex flex-wrap gap-2">
+              {CHECKLIST_TEAMS.map((t) => {
+                const p = progress.byTeam[t.id];
+                if (!p.total) return null;
+                return (
+                  <div
+                    key={t.id}
+                    className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-[11px]"
+                  >
+                    <span className="font-semibold text-slate-700">{t.short}</span>
+                    <span className="text-slate-500">
+                      {p.done}/{p.total}
+                    </span>
+                    {canToggleChecklistItem({ canServiceDesk: canSD, canN3, itemTeam: t.id }) && p.done < p.total && (
+                      <button
+                        type="button"
+                        onClick={() => finishMyTeamPart(t.id)}
+                        className="font-semibold text-emerald-700 hover:underline"
+                      >
+                        Finalizar minha parte
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
 
-                <label className="flex items-center gap-2.5 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-slate-300 transition">
-                  <input
-                    type="checkbox"
-                    checked={!!itChecklist.desvinculacaoLicencas}
-                    onChange={() => toggleChecklist('desvinculacaoLicencas')}
-                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span className="text-slate-800 font-medium">Licenças pagas (M365/PowerBI/Salesforce) recolhidas</span>
-                </label>
-
-                <label className="flex items-center gap-2.5 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-slate-300 transition">
-                  <input
-                    type="checkbox"
-                    checked={!!itChecklist.remocaoGruposEmail}
-                    onChange={() => toggleChecklist('remocaoGruposEmail')}
-                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span className="text-slate-800 font-medium">Removido de grupos de e-mail e canais Teams</span>
-                </label>
-
-                <label className="flex items-center gap-2.5 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-slate-300 transition">
-                  <input
-                    type="checkbox"
-                    checked={!!itChecklist.limpezaWipeMDM}
-                    onChange={() => toggleChecklist('limpezaWipeMDM')}
-                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span className="text-slate-800 font-medium">Limpeza Wipe MDM realizada no Notebook</span>
-                </label>
-
-                <label className="flex items-center gap-2.5 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer hover:border-slate-300 transition">
-                  <input
-                    type="checkbox"
-                    checked={!!itChecklist.registroLogsAuditoria}
-                    onChange={() => toggleChecklist('registroLogsAuditoria')}
-                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span className="text-slate-800 font-medium">Logs de auditoria armazenados para compliance</span>
-                </label>
-              </div>
-            )}
+            <div className="space-y-2">
+              {(Object.entries(itChecklist) as [string, ChecklistItemState][]).map(([key, item]) => {
+                const cat = catalogByKey.get(key);
+                const label = cat?.name || key;
+                const editable = canToggleChecklistItem({
+                  canServiceDesk: canSD,
+                  canN3,
+                  itemTeam: item.team,
+                });
+                return (
+                  <div
+                    key={key}
+                    className={`flex flex-col sm:flex-row sm:items-center gap-2 p-2.5 rounded-lg bg-white border ${
+                      item.done ? 'border-emerald-200' : 'border-slate-200'
+                    }`}
+                  >
+                    <label className={`flex items-center gap-2.5 flex-1 min-w-0 ${editable && canEditTI ? 'cursor-pointer' : 'opacity-80'}`}>
+                      <input
+                        type="checkbox"
+                        checked={item.done}
+                        disabled={!canEditTI || !editable}
+                        onChange={() => toggleChecklist(key)}
+                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span className="text-slate-800 font-medium text-[13px]">{label}</span>
+                    </label>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {canAssign ? (
+                        <select
+                          value={item.team}
+                          onChange={(e) => assignTeam(key, e.target.value as ChecklistTeam)}
+                          className="text-[11px] border border-slate-200 rounded-md px-2 py-1 bg-white"
+                          title="Equipe responsável"
+                        >
+                          {CHECKLIST_TEAMS.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                          {teamShort(item.team)}
+                        </span>
+                      )}
+                      {item.done && item.doneBy && (
+                        <span className="text-[10px] text-slate-400 truncate max-w-[140px]" title={item.doneBy}>
+                          {item.doneBy}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {Object.keys(itChecklist).length === 0 && (
+                <p className="text-[12px] text-slate-500">
+                  Nenhum item de checklist no catálogo. Cadastre em Configuração → Checklist TI.
+                </p>
+              )}
+            </div>
           </div>
 
           {/* IT Technician Notes */}
