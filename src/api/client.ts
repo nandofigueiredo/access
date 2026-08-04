@@ -123,6 +123,7 @@ export type TicketUpdatePayload = {
   workflow?: Record<string, unknown>;
   requesterEmail?: string;
   assignedQueue?: string;
+  glpiTicketNumber?: string;
 };
 
 export const api = {
@@ -175,6 +176,7 @@ export const api = {
       workflow?: Record<string, unknown>;
       requesterEmail?: string;
       assignedQueue?: string;
+      glpiTicketNumber?: string;
     }>(`/requests/${id}/status`, {
       method: 'PATCH',
       body: JSON.stringify({ status, ...extra }),

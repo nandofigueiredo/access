@@ -12,6 +12,7 @@ from app.models.user import User
 from app.schemas import OffboardingCreate, OffboardingOut
 from app.services.audit import write_audit_log
 from app.services.sanitizer import sanitize_dict, sanitize_email, sanitize_text
+from app.services.glpi_notify import notify_glpi_on_create
 from app.utils.ids import next_ticket_id
 
 router = APIRouter(prefix="/offboarding", tags=["Offboarding"])
@@ -42,6 +43,7 @@ def _to_out(row: OffboardingRequest, creator_email: str) -> OffboardingOut:
         workflow=row.workflow or None,
         requesterEmail=row.requester_email,
         assignedQueue=row.assigned_queue,
+        glpiTicketNumber=row.glpi_ticket_number,
     )
 
 
@@ -109,6 +111,8 @@ async def create_offboarding(
             "termination_datetime": row.termination_datetime.isoformat(),
         },
     )
+
+    await notify_glpi_on_create(db, row=row, kind="offboarding")
 
     return _to_out(row, current_user.email)
 

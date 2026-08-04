@@ -96,3 +96,48 @@ curl -s http://127.0.0.1:8080/healthz   # ok
 ## Worker?
 
 **Não sobe Worker nesta fase.** Redis já vem no stack; Worker só quando SMTP/Graph forem job em fila (ver comentários anteriores no histórico do projeto).
+
+---
+
+## 5) Integração GLPI (e-mail + número do chamado)
+
+### Banco
+
+```bash
+psql "$DATABASE_URL_SYNC" -f backend/sql/003_glpi.sql
+# ou no container postgres:
+# psql -U ... -d onboarding -f /path/003_glpi.sql
+```
+
+### SMTP no portal
+
+Em **Configuração → SMTP / E-mail**:
+
+1. Desmarque **Modo teste** e marque **Habilitar envio SMTP** (produção).
+2. Preencha host/usuário/senha Office 365.
+3. **Caixa GLPI** = `glpi@diroma.com.br` e mantenha **Enviar e-mail ao GLPI** ativo.
+
+Na criação de Onboarding/Offboarding a API envia e-mail com marcador `[PORTAL:ONB-…]` / `[PORTAL:OFF-…]`.
+
+### Webhook (retorno do número)
+
+1. Defina `GLPI_WEBHOOK_SECRET` no `.env` e reinicie a API.
+2. Power Automate (caixa que recebe a resposta do GLPI):
+   - Gatilho: e-mail chega (assunto/corpo com Ticket #… e `[PORTAL:…]`)
+   - Ação HTTP POST → `https://access.diroma.com.br/api/v1/webhooks/glpi-ticket`
+   - Header: `X-Glpi-Webhook-Secret: <mesmo valor do .env>`
+   - Body JSON:
+
+```json
+{
+  "portalTicketId": "<extraído do assunto>",
+  "glpiTicketNumber": "<número do GLPI>",
+  "subject": "<assunto do e-mail>",
+  "body": "<corpo>",
+  "from": "glpi@diroma.com.br"
+}
+```
+
+Se `portalTicketId` / `glpiTicketNumber` vierem vazios, a API tenta extrair de `subject`/`body`.
+
+O número também pode ser digitado manualmente no detalhe do chamado (campo **Nº chamado GLPI**).

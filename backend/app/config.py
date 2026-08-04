@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     demo_user_name: str = "Luis Figueiredo"
     demo_user_role: str = "admin"
 
+    # Webhook GLPI (Power Automate / Office 365)
+    glpi_webhook_secret: str = ""
+
     @field_validator("auth_disabled", mode="before")
     @classmethod
     def parse_bool(cls, v):  # noqa: ANN001

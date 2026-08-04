@@ -74,6 +74,13 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
 
   const [itNotes, setItNotes] = useState(ticket.itNotes || '');
   const [status, setStatus] = useState<TicketStatus>(ticket.status);
+  const [glpiTicketNumber, setGlpiTicketNumber] = useState(ticket.glpiTicketNumber || '');
+
+  useEffect(() => {
+    setGlpiTicketNumber(ticket.glpiTicketNumber || '');
+    setStatus(ticket.status);
+    setItNotes(ticket.itNotes || '');
+  }, [ticket.id, ticket.glpiTicketNumber, ticket.status, ticket.itNotes]);
 
   const toggleChecklist = (key: string) => {
     setItChecklist((prev: any) => ({
@@ -96,6 +103,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
       status,
       itChecklist,
       itNotes,
+      glpiTicketNumber: glpiTicketNumber.trim() || undefined,
       updatedAt: new Date().toISOString(),
     };
 
@@ -133,6 +141,11 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
                 >
                   {isOnboarding ? 'Onboarding' : 'Offboarding'}
                 </span>
+                {glpiTicketNumber.trim() && (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-800 text-white border border-slate-700">
+                    GLPI #{glpiTicketNumber.trim()}
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500 font-medium">{ticket.nomeCompleto}</p>
             </div>
@@ -253,6 +266,27 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
                 <span className="text-[11px] text-slate-500">Somente leitura do status</span>
               )}
             </div>
+          </div>
+
+          <div className="p-4 rounded-xl border border-slate-200 bg-white space-y-2">
+            <label className="block text-xs font-bold text-slate-800">
+              Nº chamado GLPI <span className="font-normal text-slate-400">(glpi@diroma.com.br)</span>
+            </label>
+            {canEditTI ? (
+              <input
+                value={glpiTicketNumber}
+                onChange={(e) => setGlpiTicketNumber(e.target.value)}
+                placeholder="Ex.: 123456"
+                className="w-full max-w-xs border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-[#1890ff]"
+              />
+            ) : (
+              <p className="text-sm font-mono text-slate-800">
+                {glpiTicketNumber.trim() ? `#${glpiTicketNumber.trim()}` : '— ainda não vinculado'}
+              </p>
+            )}
+            <p className="text-[11px] text-slate-500">
+              Preenchido automaticamente quando o GLPI responde (webhook) ou manualmente pelo Service Desk.
+            </p>
           </div>
 
           {/* ONBOARDING DATA */}

@@ -32,6 +32,7 @@ class OffboardingRequest(Base):
     workflow: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     requester_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     assigned_queue: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    glpi_ticket_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

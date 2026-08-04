@@ -14,6 +14,10 @@ export const SmtpConfigPage: React.FC<Props> = ({ addToast }) => {
   const [form, setForm] = useState<SmtpConfig>(smtp);
   const [showPass, setShowPass] = useState(false);
 
+  React.useEffect(() => {
+    setForm({ ...smtp, glpiInbox: smtp.glpiInbox || 'glpi@diroma.com.br', glpiEnabled: smtp.glpiEnabled !== false });
+  }, [smtp]);
+
   const set = <K extends keyof SmtpConfig>(key: K, value: SmtpConfig[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
@@ -130,6 +134,26 @@ export const SmtpConfigPage: React.FC<Props> = ({ addToast }) => {
                 <label className="text-[11px] font-semibold text-slate-500">N3 Redes</label>
                 <input value={form.n3NetworksInbox} onChange={(e) => set('n3NetworksInbox', e.target.value)} className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" />
               </div>
+            </div>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-semibold text-slate-500">Caixa GLPI</label>
+                <input
+                  value={form.glpiInbox}
+                  onChange={(e) => set('glpiInbox', e.target.value)}
+                  className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
+                  placeholder="glpi@diroma.com.br"
+                />
+              </div>
+              <label className="flex items-end gap-2 text-sm text-slate-700 pb-2">
+                <input
+                  type="checkbox"
+                  checked={form.glpiEnabled !== false}
+                  onChange={(e) => set('glpiEnabled', e.target.checked)}
+                  className="accent-[#1890ff]"
+                />
+                Enviar e-mail ao GLPI na criação de ONB/OFF
+              </label>
             </div>
           </div>
 

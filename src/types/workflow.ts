@@ -77,6 +77,9 @@ export interface SmtpConfig {
   serviceDeskInbox: string;
   n3InfraInbox: string;
   n3NetworksInbox: string;
+  /** Caixa GLPI para abertura automática de chamado */
+  glpiInbox: string;
+  glpiEnabled: boolean;
   notifyRequesterOnCreate: boolean;
   notifyRequesterOnClose: boolean;
   notifyEndUserOnComplete: boolean;
@@ -190,6 +193,8 @@ export const DEFAULT_SMTP: SmtpConfig = {
   serviceDeskInbox: 'servicedesk@diroma.com.br',
   n3InfraInbox: 'n3.infra@diroma.com.br',
   n3NetworksInbox: 'n3.redes@diroma.com.br',
+  glpiInbox: 'glpi@diroma.com.br',
+  glpiEnabled: true,
   notifyRequesterOnCreate: true,
   notifyRequesterOnClose: true,
   notifyEndUserOnComplete: true,

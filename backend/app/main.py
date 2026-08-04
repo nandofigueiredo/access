@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, ORJSONResponse
 
 from app.config import get_settings
 from app.redis_client import close_redis, redis_ping
-from app.routers import access, audit, offboarding, onboarding, requests, settings, users
+from app.routers import access, audit, offboarding, onboarding, requests, settings, users, webhooks
 
 settings_cfg = get_settings()
 
@@ -42,6 +42,7 @@ app.include_router(offboarding.router, prefix=api)
 app.include_router(requests.router, prefix=api)
 app.include_router(users.router, prefix=api)
 app.include_router(access.router, prefix=api)
+app.include_router(webhooks.router, prefix=api)
 app.include_router(audit.router, prefix=api)
 app.include_router(settings.router, prefix=api)
 

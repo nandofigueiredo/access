@@ -75,6 +75,8 @@ async def update_request_status(
         row.requester_email = sanitize_email(payload.requesterEmail) or payload.requesterEmail
     if payload.assignedQueue is not None:
         row.assigned_queue = sanitize_text(payload.assignedQueue, max_len=128)
+    if payload.glpiTicketNumber is not None:
+        row.glpi_ticket_number = sanitize_text(payload.glpiTicketNumber, max_len=64) or None
 
     await db.flush()
 
@@ -90,6 +92,7 @@ async def update_request_status(
             "it_notes_updated": payload.itNotes is not None,
             "it_checklist_updated": payload.itChecklist is not None,
             "workflow_updated": payload.workflow is not None,
+            "glpi_updated": payload.glpiTicketNumber is not None,
         },
     )
 
@@ -103,4 +106,5 @@ async def update_request_status(
         workflow=row.workflow or None,
         requesterEmail=row.requester_email,
         assignedQueue=row.assigned_queue,
+        glpiTicketNumber=row.glpi_ticket_number,
     )

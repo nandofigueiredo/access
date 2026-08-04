@@ -124,6 +124,7 @@ class OnboardingOut(BaseModel):
     workflow: dict[str, Any] | None = None
     requesterEmail: str | None = None
     assignedQueue: str | None = None
+    glpiTicketNumber: str | None = None
 
 
 class OffboardingAssetsIn(BaseModel):
@@ -189,6 +190,7 @@ class OffboardingOut(BaseModel):
     workflow: dict[str, Any] | None = None
     requesterEmail: str | None = None
     assignedQueue: str | None = None
+    glpiTicketNumber: str | None = None
 
 
 class StatusUpdate(BaseModel):
@@ -198,6 +200,7 @@ class StatusUpdate(BaseModel):
     workflow: dict[str, Any] | None = None
     requesterEmail: str | None = None
     assignedQueue: str | None = None
+    glpiTicketNumber: str | None = None
 
 
 class StatusUpdateOut(BaseModel):
@@ -210,6 +213,24 @@ class StatusUpdateOut(BaseModel):
     workflow: dict[str, Any] | None = None
     requesterEmail: str | None = None
     assignedQueue: str | None = None
+    glpiTicketNumber: str | None = None
+
+
+class GlpiWebhookIn(BaseModel):
+    portalTicketId: str | None = None
+    glpiTicketNumber: str | None = None
+    subject: str | None = None
+    body: str | None = None
+    from_email: str | None = Field(default=None, alias="from")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class GlpiWebhookOut(BaseModel):
+    ok: bool
+    portalTicketId: str
+    glpiTicketNumber: str
+    message: str
 
 
 class UserMeOut(BaseModel):

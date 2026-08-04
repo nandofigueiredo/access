@@ -200,6 +200,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <tr>
                 <th className="py-2.5 px-3 w-8"><input type="checkbox" className="accent-[#1890ff]" /></th>
                 <th className="py-2.5 px-3">ID</th>
+                <th className="py-2.5 px-3">GLPI</th>
                 <th className="py-2.5 px-3">Título</th>
                 <th className="py-2.5 px-3">Entidade</th>
                 <th className="py-2.5 px-3">Data de abertura</th>
@@ -213,7 +214,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <tbody>
               {pageItems.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-slate-400">
+                  <td colSpan={11} className="py-12 text-center text-slate-400">
                     Nenhum chamado encontrado.
                   </td>
                 </tr>
@@ -231,6 +232,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         <input type="checkbox" className="accent-[#1890ff]" />
                       </td>
                       <td className="py-2.5 px-3 font-semibold text-[#1890ff]">{ticket.id}</td>
+                      <td className="py-2.5 px-3 font-mono text-[11px] text-slate-700">
+                        {ticket.glpiTicketNumber ? `#${ticket.glpiTicketNumber}` : '—'}
+                      </td>
                       <td className="py-2.5 px-3 font-medium text-slate-800">
                         {ticket.nomeCompleto}
                         {isOnboarding ? ` / ${ticket.departamento}` : ''}

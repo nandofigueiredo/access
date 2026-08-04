@@ -94,6 +94,8 @@ export interface OnboardingData {
   workflow?: TicketWorkflow;
   requesterEmail?: string;
   assignedQueue?: string;
+  /** Número do chamado no GLPI (glpi@diroma.com.br) */
+  glpiTicketNumber?: string;
 }
 
 export interface OffboardingData {
@@ -142,6 +144,8 @@ export interface OffboardingData {
   workflow?: TicketWorkflow;
   requesterEmail?: string;
   assignedQueue?: string;
+  /** Número do chamado no GLPI (glpi@diroma.com.br) */
+  glpiTicketNumber?: string;
 }
 
 export type Ticket = OnboardingData | OffboardingData;

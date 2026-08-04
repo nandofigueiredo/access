@@ -72,6 +72,7 @@ services:
       CORPORATE_EMAIL_DOMAINS: ${CORPORATE_EMAIL_DOMAINS:-diroma.com.br}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-luis.figueiredo@diroma.com.br}
       AUTH_DISABLED: ${AUTH_DISABLED:-false}
+      GLPI_WEBHOOK_SECRET: ${GLPI_WEBHOOK_SECRET:-}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:

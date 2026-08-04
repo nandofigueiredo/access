@@ -12,6 +12,7 @@ from app.models.user import User
 from app.schemas import OnboardingCreate, OnboardingOut
 from app.services.audit import write_audit_log
 from app.services.sanitizer import sanitize_cpf, sanitize_dict, sanitize_email, sanitize_text
+from app.services.glpi_notify import notify_glpi_on_create
 from app.utils.ids import next_ticket_id
 
 router = APIRouter(prefix="/onboarding", tags=["Onboarding"])
@@ -49,6 +50,7 @@ def _to_out(row: OnboardingRequest, creator_email: str) -> OnboardingOut:
         workflow=row.workflow or None,
         requesterEmail=row.requester_email,
         assignedQueue=row.assigned_queue,
+        glpiTicketNumber=row.glpi_ticket_number,
     )
 
 
@@ -136,6 +138,8 @@ async def create_onboarding(
             "start_date": str(row.start_date),
         },
     )
+
+    await notify_glpi_on_create(db, row=row, kind="onboarding")
 
     return _to_out(row, current_user.email)
 

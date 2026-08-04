@@ -153,11 +153,28 @@ const AppContent: React.FC = () => {
         template: 'ticket_created_sd',
         ticketId: created.id,
       });
+      if (smtp.glpiEnabled !== false && smtp.glpiInbox) {
+        sendMail({
+          to: [smtp.glpiInbox],
+          subject: `[PORTAL:${created.id}] ${created.type === 'onboarding' ? 'Onboarding' : 'Offboarding'} — ${created.nomeCompleto}`,
+          body:
+            `Abertura automática de chamado GLPI — Portal TI diRoma\n\n` +
+            `Marcador: [PORTAL:${created.id}]\n` +
+            `ID Portal: ${created.id}\n` +
+            `Tipo: ${created.type}\n` +
+            `Colaborador: ${created.nomeCompleto}\n` +
+            `Solicitante: ${actor}\n` +
+            `Fila: ${created.assignedQueue || 'Service Desk N1'}\n\n` +
+            `Responda com o número do chamado (ex.: Ticket #12345) mantendo [PORTAL:${created.id}] no assunto.`,
+          template: 'ticket_created_glpi',
+          ticketId: created.id,
+        });
+      }
       if (smtp.notifyRequesterOnCreate && user?.email) {
         sendMail({
           to: [user.email],
           subject: `[Registrada] ${created.id}`,
-          body: `Sua solicitação ${created.id} foi registrada e encaminhada ao Service Desk.`,
+          body: `Sua solicitação ${created.id} foi registrada e encaminhada ao Service Desk / GLPI.`,
           template: 'ticket_created_requester',
           ticketId: created.id,
         });
@@ -165,7 +182,9 @@ const AppContent: React.FC = () => {
       addToast({
         type: 'success',
         title: 'Salvo no banco',
-        message: `${created.id} criado e sincronizado.`,
+        message: smtp.glpiEnabled !== false
+          ? `${created.id} criado. E-mail enviado ao GLPI (${smtp.glpiInbox || 'glpi@diroma.com.br'}).`
+          : `${created.id} criado e sincronizado.`,
       });
       setActiveTab('tools-workflow');
       void refreshTickets({ silent: true });
@@ -211,6 +230,7 @@ const AppContent: React.FC = () => {
         workflow: updatedTicket.workflow as unknown as Record<string, unknown> | undefined,
         requesterEmail: updatedTicket.requesterEmail,
         assignedQueue: updatedTicket.assignedQueue,
+        glpiTicketNumber: updatedTicket.glpiTicketNumber,
       });
       const merged = {
         ...updatedTicket,
@@ -221,6 +241,7 @@ const AppContent: React.FC = () => {
         workflow: (result.workflow as unknown as Ticket['workflow']) ?? updatedTicket.workflow,
         requesterEmail: result.requesterEmail ?? updatedTicket.requesterEmail,
         assignedQueue: result.assignedQueue ?? updatedTicket.assignedQueue,
+        glpiTicketNumber: result.glpiTicketNumber ?? updatedTicket.glpiTicketNumber,
       } as Ticket;
       setTickets((prev) => prev.map((t) => (t.id === merged.id ? merged : t)));
       setSelectedTicket(merged);
