@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import copy
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.auth import get_current_user
 from app.database import get_db
@@ -68,9 +71,12 @@ async def update_request_status(
     if payload.itNotes is not None:
         row.it_notes = sanitize_text(payload.itNotes, max_len=4000)
     if payload.itChecklist is not None:
-        row.it_checklist = sanitize_dict(payload.itChecklist)
+        # deepcopy + flag_modified: evita greenlet_spawn em JSONB mutável
+        row.it_checklist = copy.deepcopy(sanitize_dict(payload.itChecklist))
+        flag_modified(row, "it_checklist")
     if payload.workflow is not None:
-        row.workflow = sanitize_dict(payload.workflow)
+        row.workflow = copy.deepcopy(sanitize_dict(payload.workflow))
+        flag_modified(row, "workflow")
     if payload.requesterEmail is not None:
         row.requester_email = sanitize_email(payload.requesterEmail) or payload.requesterEmail
     if payload.assignedQueue is not None:
@@ -79,6 +85,7 @@ async def update_request_status(
         row.glpi_ticket_number = sanitize_text(payload.glpiTicketNumber, max_len=64) or None
 
     await db.flush()
+    await db.refresh(row)
 
     await write_audit_log(
         db,
@@ -96,14 +103,15 @@ async def update_request_status(
         },
     )
 
+    # Cópias: resposta fora da sessão async sem lazy-load JSONB
     return StatusUpdateOut(
         id=row.id,
         type=request_type,  # type: ignore[arg-type]
         status=row.status,  # type: ignore[arg-type]
         updatedAt=row.updated_at,
         itNotes=row.it_notes,
-        itChecklist=row.it_checklist,
-        workflow=row.workflow or None,
+        itChecklist=copy.deepcopy(row.it_checklist) if row.it_checklist is not None else None,
+        workflow=copy.deepcopy(row.workflow) if row.workflow else None,
         requesterEmail=row.requester_email,
         assignedQueue=row.assigned_queue,
         glpiTicketNumber=row.glpi_ticket_number,

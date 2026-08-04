@@ -1,5 +1,5 @@
 import type { CatalogItem } from '../types/catalog';
-import type { WorkflowAreaId, TicketWorkflow } from '../types/workflow';
+import type { WorkflowAreaId, WorkflowStageId, TicketWorkflow } from '../types/workflow';
 import { openHandoff } from './workflowEngine';
 
 /** Equipes que executam itens do checklist TI */
@@ -156,6 +156,142 @@ export function ensureHandoffsForAssignedTeams(
     );
   }
   return next;
+}
+
+/** Cancela handoffs N3 de equipes que não têm mais itens pendentes atribuídos. */
+export function pruneUnusedHandoffs(
+  wf: TicketWorkflow,
+  state: ItChecklistMap,
+  actor: string
+): TicketWorkflow {
+  const needed = new Set<string>();
+  for (const item of Object.values(state)) {
+    if (item.team !== 'service_desk' && !item.done) {
+      needed.add(item.team);
+    }
+  }
+  // Também mantém handoff se ainda há itens da equipe (mesmo concluídos) com handoff in_progress? 
+  // Só cancela se a equipe não aparece em nenhum item incompleto.
+  let changed = false;
+  const handoffs = wf.handoffs.map((h) => {
+    if (
+      (h.status === 'open' || h.status === 'in_progress') &&
+      (h.area === 'n3_infra_security' || h.area === 'n3_networks') &&
+      !needed.has(h.area)
+    ) {
+      changed = true;
+      return {
+        ...h,
+        status: 'cancelled' as const,
+        updatedAt: new Date().toISOString(),
+        notes: 'Cancelado: equipe não atribuída neste chamado.',
+      };
+    }
+    return h;
+  });
+  if (!changed) return wf;
+  let next: TicketWorkflow = { ...wf, handoffs };
+  next = {
+    ...next,
+    timeline: [
+      {
+        id: `evt-${Date.now().toString(36)}`,
+        at: new Date().toISOString(),
+        actor,
+        area: 'service_desk',
+        action: 'HANDOFF_CANCELADO',
+        detail: 'Handoffs de equipes não necessárias foram cancelados.',
+      },
+      ...next.timeline,
+    ],
+  };
+  return next;
+}
+
+/**
+ * Atualiza stage/dono do workflow com base na checklist e handoffs.
+ * Etapas N3 só entram no caminho se houver atribuição.
+ */
+export function syncWorkflowFromChecklist(
+  wf: TicketWorkflow,
+  state: ItChecklistMap,
+  actor: string
+): TicketWorkflow {
+  let next = ensureHandoffsForAssignedTeams(wf, state, actor);
+  next = pruneUnusedHandoffs(next, state, actor);
+
+  if (next.stage === 'completed') return next;
+
+  const items = Object.values(state);
+  const allDone = items.length > 0 && items.every((i) => i.done);
+  const hasN3Pending = items.some((i) => i.team !== 'service_desk' && !i.done);
+  const hasSdPending = items.some((i) => i.team === 'service_desk' && !i.done);
+  const openHandoffs = next.handoffs.filter((h) => h.status === 'open' || h.status === 'in_progress');
+  const claimed =
+    next.stage !== 'awaiting_service_desk' ||
+    next.currentOwner === 'service_desk' ||
+    next.timeline.some((e) => e.action === 'SD_ASSUMIU');
+
+  if (allDone && openHandoffs.length === 0) {
+    next = {
+      ...next,
+      stage: 'ready_for_sd_closure',
+      currentOwner: 'service_desk',
+    };
+  } else if (hasN3Pending || openHandoffs.length > 0) {
+    const inProgress = openHandoffs.some((h) => h.status === 'in_progress');
+    const active = openHandoffs.find((h) => h.status === 'open' || h.status === 'in_progress');
+    next = {
+      ...next,
+      stage: inProgress ? 'n3_in_progress' : 'waiting_n3_integration',
+      currentOwner: (active?.area as WorkflowAreaId) || 'n3_infra_security',
+    };
+  } else if (claimed || hasSdPending) {
+    next = {
+      ...next,
+      stage: 'in_service_desk',
+      currentOwner: 'service_desk',
+    };
+  } else {
+    next = {
+      ...next,
+      stage: 'awaiting_service_desk',
+      currentOwner: 'service_desk',
+    };
+  }
+
+  return next;
+}
+
+/** Etapas do pipeline relevantes para este chamado (sem N3 se não atribuído). */
+export function relevantPipelineStages(state: ItChecklistMap, wf: TicketWorkflow): WorkflowStageId[] {
+  const needsInfra =
+    Object.values(state).some((i) => i.team === 'n3_infra_security') ||
+    wf.handoffs.some((h) => h.area === 'n3_infra_security' && h.status !== 'cancelled');
+  const needsNetworks =
+    Object.values(state).some((i) => i.team === 'n3_networks') ||
+    wf.handoffs.some((h) => h.area === 'n3_networks' && h.status !== 'cancelled');
+
+  const stages: WorkflowStageId[] = ['awaiting_service_desk', 'in_service_desk'];
+  if (needsInfra || needsNetworks) {
+    stages.push('waiting_n3_integration', 'n3_in_progress');
+  }
+  stages.push('ready_for_sd_closure', 'completed');
+  return stages;
+}
+
+export function relevantAreaPipeline(state: ItChecklistMap, wf: TicketWorkflow): WorkflowAreaId[] {
+  const areas: WorkflowAreaId[] = ['requester', 'service_desk'];
+  const needsInfra =
+    Object.values(state).some((i) => i.team === 'n3_infra_security') ||
+    wf.handoffs.some((h) => h.area === 'n3_infra_security' && h.status !== 'cancelled');
+  const needsNetworks =
+    Object.values(state).some((i) => i.team === 'n3_networks') ||
+    wf.handoffs.some((h) => h.area === 'n3_networks' && h.status !== 'cancelled');
+  if (needsInfra) areas.push('n3_infra_security');
+  if (needsNetworks) areas.push('n3_networks');
+  areas.push('end_user');
+  return areas;
 }
 
 export function markTeamItemsDone(

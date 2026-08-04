@@ -24,10 +24,10 @@ import {
   ChecklistTeam,
   checklistKeyOf,
   checklistProgress,
-  ensureHandoffsForAssignedTeams,
   ItChecklistMap,
   ChecklistItemState,
   markTeamItemsDone,
+  syncWorkflowFromChecklist,
   teamLabel,
   teamShort,
 } from '../services/checklistTeams';
@@ -170,13 +170,28 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
     }
 
     let workflow = ticket.workflow || createInitialWorkflow(ticket.createdBy);
-    if (canSD) {
-      workflow = ensureHandoffsForAssignedTeams(workflow, itChecklist, actor);
+    if (canSD || canN3) {
+      workflow = syncWorkflowFromChecklist(workflow, itChecklist, actor);
     }
+
+    const mapStageToStatus = (stage: string): TicketStatus => {
+      if (stage === 'completed') return 'Concluído';
+      if (stage === 'ready_for_sd_closure') return 'Pronta p/ Fechamento';
+      if (stage === 'waiting_n3_integration' || stage === 'n3_in_progress') return 'Aguardando N3';
+      if (stage === 'in_service_desk') return 'Em Andamento';
+      return status === 'Pendente TI' ? 'Pendente TI' : status;
+    };
+
+    const derivedStatus =
+      workflow.stage === 'completed'
+        ? 'Concluído'
+        : canSD || canN3
+          ? mapStageToStatus(workflow.stage)
+          : status;
 
     const updatedTicket: Ticket = {
       ...ticket,
-      status,
+      status: derivedStatus,
       itChecklist,
       itNotes,
       glpiTicketNumber: glpiTicketNumber.trim() || undefined,
@@ -185,6 +200,7 @@ export const TicketDetailModal: React.FC<TicketDetailModalProps> = ({
     };
 
     onUpdateTicket(updatedTicket);
+    setStatus(derivedStatus);
 
     addToast({
       type: 'success',

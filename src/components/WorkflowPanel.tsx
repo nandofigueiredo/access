@@ -8,7 +8,15 @@ import {
   openHandoff,
   updateHandoffStatus,
 } from '../services/workflowEngine';
+import {
+  buildChecklistState,
+  ChecklistItemState,
+  relevantAreaPipeline,
+  relevantPipelineStages,
+  syncWorkflowFromChecklist,
+} from '../services/checklistTeams';
 import { useWorkflowMail } from '../store/WorkflowMailContext';
+import { useCatalog } from '../store/CatalogContext';
 import { useAuth } from '../auth/AuthContext';
 import { formatDateTimeToBR } from '../utils/formatters';
 import {
@@ -38,6 +46,7 @@ function mapStageToStatus(stage: string): Ticket['status'] {
 
 export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToast }) => {
   const { user } = useAuth();
+  const { catalog } = useCatalog();
   const { smtp, sendMail } = useWorkflowMail();
   const actor = user?.email || user?.name || 'operador';
   const canSD = can(user?.role, 'workflow.serviceDesk');
@@ -46,7 +55,31 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
   const [handoffNote, setHandoffNote] = useState('');
   const [ipInfo, setIpInfo] = useState('');
 
+  const catalogChecklist =
+    ticket.type === 'onboarding' ? catalog.onboardingChecklist : catalog.offboardingChecklist;
+  const checklistState = useMemo(
+    () => buildChecklistState(catalogChecklist, ticket.itChecklist as Record<string, unknown> | undefined),
+    [catalogChecklist, ticket.itChecklist]
+  );
+
   const wf = useMemo(() => ticket.workflow || createInitialWorkflow(ticket.createdBy), [ticket]);
+
+  const checklistItems = Object.values(checklistState) as ChecklistItemState[];
+  const needsInfra =
+    checklistItems.some((i) => i.team === 'n3_infra_security') ||
+    wf.handoffs.some((h) => h.area === 'n3_infra_security' && h.status !== 'cancelled');
+  const needsNetworks =
+    checklistItems.some((i) => i.team === 'n3_networks') ||
+    wf.handoffs.some((h) => h.area === 'n3_networks' && h.status !== 'cancelled');
+
+  const pipelineStages = useMemo(
+    () => relevantPipelineStages(checklistState, wf),
+    [checklistState, wf]
+  );
+  const areaPipeline = useMemo(
+    () => relevantAreaPipeline(checklistState, wf),
+    [checklistState, wf]
+  );
 
   const persist = (nextWf: typeof wf, extra?: Partial<Ticket>) => {
     onUpdateTicket({
@@ -68,7 +101,8 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
   };
 
   const handleClaim = () => {
-    const next = claimByServiceDesk(wf, actor);
+    let next = claimByServiceDesk(wf, actor);
+    next = syncWorkflowFromChecklist(next, checklistState, actor);
     persist(next);
     notify(
       [smtp.serviceDeskInbox],
@@ -76,7 +110,7 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
       `Service Desk (${actor}) assumiu ${ticket.id} — ${ticket.nomeCompleto}.`,
       'sd_claim'
     );
-    addToast({ type: 'success', title: 'Service Desk', message: 'Demanda assumida.' });
+    addToast({ type: 'success', title: 'Service Desk', message: 'Demanda assumida. Etapas seguem a checklist.' });
   };
 
   const handleOpenInfra = () => {
@@ -122,7 +156,8 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
         : area === 'n3_infra_security'
           ? ['Identidade/MFA/Licenças tratados']
           : undefined;
-    const next = updateHandoffStatus(wf, id, 'done', actor, 'Concluído pela área', deliverables);
+    let next = updateHandoffStatus(wf, id, 'done', actor, 'Concluído pela área', deliverables);
+    next = syncWorkflowFromChecklist(next, checklistState, actor);
     persist(next);
     notify(
       [smtp.serviceDeskInbox],
@@ -192,42 +227,40 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
 
   const stageMeta = WORKFLOW_STAGES[wf.stage];
   const owner = WORKFLOW_AREAS[wf.currentOwner];
-  const pipelineStages = [
-    'awaiting_service_desk',
-    'in_service_desk',
-    'waiting_n3_integration',
-    'n3_in_progress',
-    'ready_for_sd_closure',
-    'completed',
-  ] as const;
 
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-sky-100 bg-gradient-to-br from-[#001529] via-[#002d5b] to-[#0a4a8a] text-white p-4 shadow-sm">
         <div className="text-[11px] font-bold uppercase tracking-wide text-sky-200">Board do chamado</div>
         <div className="text-base font-bold mt-0.5">{stageMeta.label}</div>
-        <p className="text-[12px] text-white/75 mt-1 leading-relaxed">{stageMeta.description}</p>
+        <p className="text-[12px] text-white/75 mt-1 leading-relaxed">
+          Etapas atualizam sozinhas conforme a atribuição e conclusão da checklist.
+          {!needsInfra && !needsNetworks
+            ? ' Neste chamado só há Service Desk — N3 não entra no fluxo.'
+            : !needsNetworks
+              ? ' N3 Redes não foi atribuído neste chamado.'
+              : !needsInfra
+                ? ' N3 Infra não foi atribuído neste chamado.'
+                : ''}
+        </p>
         <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold">
-          {[
-            WORKFLOW_AREAS.requester,
-            WORKFLOW_AREAS.service_desk,
-            WORKFLOW_AREAS.n3_infra_security,
-            WORKFLOW_AREAS.n3_networks,
-            WORKFLOW_AREAS.end_user,
-          ].map((a, idx, arr) => (
-            <React.Fragment key={a.short}>
-              <span
-                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border ${
-                  owner.short === a.short
-                    ? 'bg-white text-[#002d5b] border-white'
-                    : 'bg-white/10 border-white/15 text-white/90'
-                }`}
-              >
-                {a.short}
-              </span>
-              {idx < arr.length - 1 && <span className="text-white/40">→</span>}
-            </React.Fragment>
-          ))}
+          {areaPipeline.map((areaId, idx, arr) => {
+            const a = WORKFLOW_AREAS[areaId];
+            return (
+              <React.Fragment key={areaId}>
+                <span
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border ${
+                    owner.short === a.short
+                      ? 'bg-white text-[#002d5b] border-white'
+                      : 'bg-white/10 border-white/15 text-white/90'
+                  }`}
+                >
+                  {a.short}
+                </span>
+                {idx < arr.length - 1 && <span className="text-white/40">→</span>}
+              </React.Fragment>
+            );
+          })}
         </div>
         <div className="mt-3 inline-flex items-center gap-2 text-[11px] font-bold px-3 py-1 rounded-full bg-white/15 border border-white/20">
           Dono atual: {owner.label}
@@ -238,7 +271,13 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
         <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-2">
           Onde o processo está parado
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        <div
+          className={`grid gap-2 ${
+            pipelineStages.length <= 4
+              ? 'grid-cols-2 sm:grid-cols-4'
+              : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-6'
+          }`}
+        >
           {pipelineStages.map((s) => {
             const meta = WORKFLOW_STAGES[s];
             const isCurrent = wf.stage === s;
@@ -280,6 +319,9 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
             );
           })}
         </div>
+        <p className="mt-2 text-[11px] text-slate-500">
+          Atribua equipes na aba Checklist TI e salve — o board acompanha automaticamente.
+        </p>
       </div>
 
       {wf.stage !== 'completed' && canOperate && (
@@ -293,7 +335,7 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
               <Headphones className="w-4 h-4" /> Service Desk assumir
             </button>
           )}
-          {canSD && (
+          {canSD && needsInfra && (
             <button
               type="button"
               onClick={handleOpenInfra}
@@ -302,7 +344,7 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
               <Shield className="w-4 h-4" /> Abrir N3 Infra/Segurança
             </button>
           )}
-          {canSD && (
+          {canSD && needsNetworks && (
             <button
               type="button"
               onClick={handleOpenNetworks}
@@ -317,14 +359,14 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
               disabled={!canFinalize}
               onClick={handleFinalize}
               className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              title={!canFinalize ? 'Conclua todos os handoffs N3 antes. Somente SD finaliza.' : 'Fechamento exclusivo Service Desk'}
+              title={!canFinalize ? 'Conclua checklist/handoffs N3 antes. Somente SD finaliza.' : 'Fechamento exclusivo Service Desk'}
             >
               <Lock className="w-4 h-4" /> Finalizar (somente SD)
             </button>
           )}
           {canN3 && !canSD && (
             <p className="sm:col-span-2 text-[12px] text-violet-700 bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
-              Perfil Admin N3: conclua os handoffs abaixo. Abertura e fechamento ficam com o Service Desk.
+              Perfil Admin N3: conclua os handoffs / checklist da sua área. Fechamento fica com o Service Desk.
             </p>
           )}
         </div>
@@ -336,7 +378,7 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
         </p>
       )}
 
-      {canOperate && (
+      {canOperate && (needsInfra || needsNetworks) && (
         <div>
           <label className="text-[11px] font-semibold text-slate-500">Nota para handoff N3</label>
           <textarea
@@ -375,6 +417,8 @@ export const WorkflowPanel: React.FC<Props> = ({ ticket, onUpdateTicket, addToas
                   className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
                     h.status === 'done'
                       ? 'bg-emerald-50 text-emerald-700'
+                      : h.status === 'cancelled'
+                        ? 'bg-slate-100 text-slate-500'
                       : h.status === 'in_progress'
                         ? 'bg-sky-50 text-sky-700'
                         : 'bg-amber-50 text-amber-700'

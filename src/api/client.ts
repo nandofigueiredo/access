@@ -172,7 +172,7 @@ export const api = {
       status: TicketStatus;
       updatedAt: string;
       itNotes?: string;
-      itChecklist?: Record<string, boolean>;
+      itChecklist?: Record<string, unknown>;
       workflow?: Record<string, unknown>;
       requesterEmail?: string;
       assignedQueue?: string;
