@@ -18,15 +18,14 @@ export const DiRomaLogo: React.FC<DiRomaLogoProps> = ({
   inverted = false,
   sizeClass,
 }) => {
-  const height = sizeClass ?? (compact ? 'h-10' : 'h-14 sm:h-16');
+  const height = sizeClass ?? (compact ? 'h-12' : 'h-16 sm:h-20');
 
   return (
     <img
       src={LOGO_SRC}
       alt="Access diRoma"
-      className={`${height} w-auto max-w-full object-contain ${className}`}
+      className={`${height} w-auto max-w-full object-contain mx-auto block ${className}`}
       draggable={false}
-      // inverted reserved for future theme variants
       data-inverted={inverted ? '1' : '0'}
     />
   );

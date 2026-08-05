@@ -195,7 +195,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside className="w-full lg:w-[260px] bg-[#001529] text-white flex flex-col shrink-0 min-h-0 lg:min-h-screen">
-      <div className="px-4 py-4 border-b border-white/10">
+      <div className="px-4 py-5 border-b border-white/10 flex justify-center items-center">
         <DiRomaLogo inverted compact />
       </div>
 

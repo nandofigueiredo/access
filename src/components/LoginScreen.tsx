@@ -114,8 +114,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onOpenSettings }) => {
         </div>
 
         <div className="flex-1 flex flex-col justify-center max-w-md mx-auto w-full py-6">
-          <div className="flex justify-center mb-8">
-            <DiRomaLogo sizeClass="h-20 sm:h-24" />
+          <div className="flex justify-center items-center mb-8 w-full">
+            <DiRomaLogo sizeClass="h-24 sm:h-28" />
           </div>
 
           <div className="text-center">
