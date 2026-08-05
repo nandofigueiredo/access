@@ -33,7 +33,11 @@ export const DiRomaLogo: React.FC<DiRomaLogoProps> = ({
   );
 
   if (inverted) {
-    return img;
+    return (
+      <div className="w-full flex items-center justify-center">
+        {img}
+      </div>
+    );
   }
 
   // Login / fundo claro: placa navy para o GIF branco aparecer com contraste
