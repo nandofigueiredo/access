@@ -1,11 +1,12 @@
 import React from 'react';
 
-const LOGO_SRC = '/img/logo_diroma_branca-CphClutu.svg';
+/** Logo oficial animada (CDN). */
+const LOGO_SRC = 'https://pub-0bd190a98cd2450691fc945bd0eb0ecf.r2.dev/diroma.gif';
 
 interface DiRomaLogoProps {
   className?: string;
   compact?: boolean;
-  /** Logo branca (sidebar/fundo escuro). false = versão navy para fundo claro. */
+  /** Mantido por compatibilidade (sidebar / login). */
   inverted?: boolean;
   /** Altura customizada (ex: h-20). Sobrescreve compact. */
   sizeClass?: string;
@@ -17,14 +18,16 @@ export const DiRomaLogo: React.FC<DiRomaLogoProps> = ({
   inverted = false,
   sizeClass,
 }) => {
-  const height = sizeClass ?? (compact ? 'h-9' : 'h-14 sm:h-16');
+  const height = sizeClass ?? (compact ? 'h-10' : 'h-14 sm:h-16');
 
   return (
     <img
       src={LOGO_SRC}
-      alt="diRoma hotéis & parques"
-      className={`${height} w-auto object-contain ${inverted ? '' : 'diroma-logo-navy'} ${className}`}
+      alt="Access diRoma"
+      className={`${height} w-auto max-w-full object-contain ${className}`}
       draggable={false}
+      // inverted reserved for future theme variants
+      data-inverted={inverted ? '1' : '0'}
     />
   );
 };
