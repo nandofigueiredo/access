@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +28,7 @@ router = APIRouter(prefix="/onboarding", tags=["Onboarding"])
 
 
 def _to_out(row: OnboardingRequest, creator_email: str) -> OnboardingOut:
-    systems = row.systems_access or {}
+    systems = copy.deepcopy(row.systems_access) if row.systems_access else {}
     return OnboardingOut(
         id=row.id,
         status=row.status,  # type: ignore[arg-type]
@@ -44,7 +46,7 @@ def _to_out(row: OnboardingRequest, creator_email: str) -> OnboardingOut:
         enderecoEntrega=row.address,
         perfilHardware=row.hardware_profile,
         justificativaHardware=systems.get("justificativaHardware"),
-        perifericos=row.peripherals or {},
+        perifericos=copy.deepcopy(row.peripherals) if row.peripherals else {},
         telefonia=systems.get("telefonia") or {},
         copiarAcessosDe=systems.get("copiarAcessosDe"),
         plataformaBase=systems.get("plataformaBase") or {},
@@ -52,9 +54,9 @@ def _to_out(row: OnboardingRequest, creator_email: str) -> OnboardingOut:
         unidade=row.unit_location,
         necessitaCracha=row.requires_badge,
         lgpdAceito=row.lgpd_accepted,
-        itChecklist=row.it_checklist,
+        itChecklist=copy.deepcopy(row.it_checklist) if row.it_checklist else {},
         itNotes=row.it_notes,
-        workflow=row.workflow or None,
+        workflow=copy.deepcopy(row.workflow) if row.workflow else None,
         requesterEmail=row.requester_email,
         assignedQueue=row.assigned_queue,
         glpiTicketNumber=row.glpi_ticket_number,

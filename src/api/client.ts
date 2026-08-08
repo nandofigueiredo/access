@@ -28,6 +28,8 @@ export function setAccessTokenProvider(provider: TokenProvider) {
 }
 
 /** Obtém access_token silencioso para a API. Nunca abre popup (evita janela fantasma). */
+let _silentTokenWarned = false;
+
 export async function acquireApiAccessToken(account?: AccountInfo | null): Promise<string | null> {
   if (!msalInstanceRef) return null;
   try {
@@ -48,15 +50,21 @@ export async function acquireApiAccessToken(account?: AccountInfo | null): Promi
   for (const request of attempts) {
     try {
       const result = await msalInstanceRef.acquireTokenSilent(request);
-      if (result?.accessToken) return result.accessToken;
+      if (result?.accessToken) {
+        _silentTokenWarned = false;
+        return result.accessToken;
+      }
     } catch {
       // tenta próximo conjunto de scopes
     }
   }
 
-  console.warn(
-    'Falha ao obter access_token silencioso. Faça logout/login Microsoft de novo (sem popup automático).'
-  );
+  if (!_silentTokenWarned) {
+    _silentTokenWarned = true;
+    console.warn(
+      'Falha ao obter access_token silencioso. Faça logout/login Microsoft de novo (sem popup automático).'
+    );
+  }
   return null;
 }
 

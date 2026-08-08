@@ -124,14 +124,30 @@ async def notify_glpi_on_create(
     row: OnboardingRequest | OffboardingRequest,
     kind: str,
 ) -> dict[str, Any]:
-    """Abre chamado no GLPI via API REST e grava o número. E-mail só se GLPI_EMAIL_FALLBACK=true."""
+    """Abre chamado no GLPI via API REST e grava o número. Nunca propaga exceção (criação do portal não pode falhar por GLPI)."""
+    portal_id = str(getattr(row, "id", "") or "?")
+    try:
+        return await _notify_glpi_on_create_inner(db, row=row, kind=kind)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("GLPI notify falhou para %s (chamado do portal mantido)", portal_id)
+        return {"ok": False, "status": "failed", "error": str(exc)}
+
+
+async def _notify_glpi_on_create_inner(
+    db: AsyncSession,
+    *,
+    row: OnboardingRequest | OffboardingRequest,
+    kind: str,
+) -> dict[str, Any]:
+    portal_id = str(row.id)
+    existing = (row.glpi_ticket_number or "").strip()
+
     cfg = await load_smtp_config(db)
     if not bool(cfg.get("glpiEnabled", True)):
-        logger.warning("GLPI notify skipped: glpiEnabled=false (%s)", getattr(row, "id", "?"))
+        logger.warning("GLPI notify skipped: glpiEnabled=false (%s)", portal_id)
         return {"ok": True, "status": "skipped", "reason": "glpiEnabled=false"}
 
     settings = get_settings()
-    existing = (row.glpi_ticket_number or "").strip()
     if existing:
         return {
             "ok": True,
@@ -150,10 +166,10 @@ async def notify_glpi_on_create(
                 db,
                 action="GLPI_TICKET_CREATED_API",
                 performed_by_user_id=None,
-                target_request_id=row.id,
+                target_request_id=portal_id,
                 details={"glpi_ticket_number": num, "apiBase": api_result.get("apiBase")},
             )
-            logger.info("GLPI API criou ticket %s para %s", num, row.id)
+            logger.info("GLPI API criou ticket %s para %s", num, portal_id)
             return {
                 "ok": True,
                 "status": "created",
@@ -162,7 +178,7 @@ async def notify_glpi_on_create(
             }
 
         err = api_result.get("error") or api_result.get("reason") or "Falha na API GLPI"
-        logger.warning("GLPI API falhou para %s: %s", row.id, err)
+        logger.warning("GLPI API falhou para %s: %s", portal_id, err)
         if settings.glpi_email_fallback:
             mail = await _notify_glpi_email_fallback(db, row=row, kind=kind, cfg=cfg)
             mail["channels"] = {**(mail.get("channels") or {}), "api": api_result}

@@ -110,14 +110,17 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
     import traceback
 
     traceback.print_exc()
-    detail = str(exc) if settings_cfg.debug else "Erro interno do servidor."
-    msg = str(exc).lower()
+    detail = str(exc)
+    msg = detail.lower()
     if "workflow" in msg or "app_settings" in msg or "undefinedcolumn" in msg or "does not exist" in msg:
         detail = (
             "Schema do banco desatualizado. Aplique backend/sql/002_integration.sql "
             f"(coluna/tabela ausente). Detalhe: {exc}"
         )
-    return JSONResponse(status_code=500, content={"detail": detail})
+    elif "stringdatalength" in msg or "value too long" in msg:
+        detail = f"Valor excede o tamanho do campo no banco: {exc}"
+    # Sempre devolve mensagem útil no toast (não só "Erro interno")
+    return JSONResponse(status_code=500, content={"detail": detail[:500]})
 
 
 @app.exception_handler(ValueError)

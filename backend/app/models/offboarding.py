@@ -25,7 +25,7 @@ class OffboardingRequest(Base):
     transfer_files: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     guided_no_personal_files: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     hardware_assets: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    return_method: Mapped[str] = mapped_column(String(32), nullable=False)
+    return_method: Mapped[str] = mapped_column(String(64), nullable=False)
     return_deadline: Mapped[date | None] = mapped_column(Date, nullable=True)
     it_checklist: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     it_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -39,4 +39,4 @@ class OffboardingRequest(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    creator = relationship("User", back_populates="offboarding_requests")
+    creator = relationship("User", back_populates="offboarding_requests", lazy="selectin")

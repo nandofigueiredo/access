@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,12 +44,12 @@ def _to_out(row: OffboardingRequest, creator_email: str) -> OffboardingOut:
         emailDestinoArquivos=row.cloud_transfer_to,
         respostaAutomaticaAusencia=row.auto_reply,
         orientadoNaoManterArquivosPessoais=row.guided_no_personal_files,
-        ativos=row.hardware_assets or {},
+        ativos=copy.deepcopy(row.hardware_assets) if row.hardware_assets else {},
         modalidadeDevolucao=row.return_method,
         prazoLimiteDevolucao=row.return_deadline,
-        itChecklist=row.it_checklist or {},
+        itChecklist=copy.deepcopy(row.it_checklist) if row.it_checklist else {},
         itNotes=row.it_notes,
-        workflow=row.workflow or None,
+        workflow=copy.deepcopy(row.workflow) if row.workflow else None,
         requesterEmail=row.requester_email,
         assignedQueue=row.assigned_queue,
         glpiTicketNumber=row.glpi_ticket_number,
@@ -94,7 +96,7 @@ async def create_offboarding(
         transfer_files=payload.transferenciaArquivos,
         guided_no_personal_files=payload.orientadoNaoManterArquivosPessoais,
         hardware_assets=sanitize_dict(payload.ativos.model_dump()),
-        return_method=payload.modalidadeDevolucao,
+        return_method=(sanitize_text(payload.modalidadeDevolucao, max_len=64) or "Presencial")[:64],
         return_deadline=payload.prazoLimiteDevolucao,
         it_checklist={
             "bloqueioIdP": False,

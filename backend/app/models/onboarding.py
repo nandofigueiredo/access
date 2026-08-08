@@ -41,4 +41,4 @@ class OnboardingRequest(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    creator = relationship("User", back_populates="onboarding_requests")
+    creator = relationship("User", back_populates="onboarding_requests", lazy="selectin")

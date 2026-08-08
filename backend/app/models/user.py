@@ -25,6 +25,11 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    onboarding_requests = relationship("OnboardingRequest", back_populates="creator")
-    offboarding_requests = relationship("OffboardingRequest", back_populates="creator")
-    audit_logs = relationship("AuditLog", back_populates="performer")
+    # lazy="noload": evita MissingGreenlet no flush async (backref não dispara SELECT implícito)
+    onboarding_requests = relationship(
+        "OnboardingRequest", back_populates="creator", lazy="noload"
+    )
+    offboarding_requests = relationship(
+        "OffboardingRequest", back_populates="creator", lazy="noload"
+    )
+    audit_logs = relationship("AuditLog", back_populates="performer", lazy="noload")

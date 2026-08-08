@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS offboarding_requests (
     transfer_files          BOOLEAN NOT NULL DEFAULT FALSE,
     guided_no_personal_files BOOLEAN NOT NULL DEFAULT FALSE,
     hardware_assets         JSONB NOT NULL DEFAULT '{}'::jsonb,
-    return_method           VARCHAR(32) NOT NULL, -- Presencial | Correios
+    return_method           VARCHAR(64) NOT NULL, -- catálogo (ex.: Presencial, Correios, …)
     return_deadline         DATE,
     it_checklist            JSONB NOT NULL DEFAULT '{}'::jsonb,
     it_notes                TEXT,

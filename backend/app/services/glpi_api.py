@@ -207,8 +207,14 @@ async def create_glpi_ticket(
     if not cfg.glpi_api_configured:
         return {"ok": False, "status": "skipped", "reason": "GLPI API não configurada"}
 
+    # Snapshot síncrono ANTES de qualquer await — evita MissingGreenlet após IO
+    try:
+        payload = build_ticket_payload(row, kind=kind, entity_id=cfg.glpi_entity_id)
+        portal_id = str(row.id)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "status": "failed", "error": f"Payload GLPI: {exc}"}
+
     bases = _candidate_bases(cfg)
-    entity = cfg.glpi_entity_id
     last_error = ""
 
     async with httpx.AsyncClient(timeout=30.0, verify=True, follow_redirects=True) as client:
@@ -216,7 +222,6 @@ async def create_glpi_ticket(
             session_token: str | None = None
             try:
                 session_token = await _init_session(client, base, cfg)
-                payload = build_ticket_payload(row, kind=kind, entity_id=entity)
                 headers = {
                     "App-Token": cfg.glpi_app_token.strip(),
                     "Session-Token": session_token,
@@ -251,12 +256,12 @@ async def create_glpi_ticket(
                     last_error = f"Resposta sem id: {data}"
                     continue
 
-                logger.info("GLPI ticket criado %s para %s via %s", ticket_id, row.id, base)
+                logger.info("GLPI ticket criado %s para %s via %s", ticket_id, portal_id, base)
                 return {
                     "ok": True,
                     "status": "created",
                     "glpiTicketNumber": str(ticket_id),
-                    "portalTicketId": row.id,
+                    "portalTicketId": portal_id,
                     "apiBase": base,
                 }
             except Exception as exc:  # noqa: BLE001
