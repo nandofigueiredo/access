@@ -78,6 +78,13 @@ export const OffboardingForm: React.FC<OffboardingFormProps> = ({ onSubmitTicket
       newErrors.orientadoNaoManterArquivosPessoais = 'É necessário confirmar a orientação sobre ausência de arquivos pessoais.';
     }
 
+    if (!modalidadeDevolucao?.trim()) {
+      newErrors.modalidadeDevolucao = 'Selecione a modalidade de devolução.';
+    }
+    if (!prazoLimiteDevolucao) {
+      newErrors.prazoLimiteDevolucao = 'Informe o prazo limite de devolução dos ativos.';
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -110,14 +117,18 @@ export const OffboardingForm: React.FC<OffboardingFormProps> = ({ onSubmitTicket
       gestor,
       dataHoraDesligamento: dataHoraISO,
       redirecionamentoEmail,
-      emailDestinoRedirecionamento,
+      emailDestinoRedirecionamento: redirecionamentoEmail
+        ? emailDestinoRedirecionamento.trim() || undefined
+        : undefined,
       transferenciaArquivos,
-      emailDestinoArquivos,
+      emailDestinoArquivos: transferenciaArquivos
+        ? emailDestinoArquivos.trim() || undefined
+        : undefined,
       respostaAutomaticaAusencia,
       orientadoNaoManterArquivosPessoais,
       ativos: {
         notebook,
-        codigoPatrimonioNotebook,
+        codigoPatrimonioNotebook: codigoPatrimonioNotebook.trim() || undefined,
         perifericos,
         smartphone,
         cracha,
@@ -489,28 +500,41 @@ export const OffboardingForm: React.FC<OffboardingFormProps> = ({ onSubmitTicket
           {/* Modalidade de devolução */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-800/80">
             <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">Logística de Recolhimento</label>
+              <label className="block text-xs font-medium text-slate-300 mb-1">
+                Logística de Recolhimento <span className="text-rose-400">*</span>
+              </label>
               <select
                 value={modalidadeDevolucao}
                 onChange={(e) => setModalidadeDevolucao(e.target.value as ReturnLogisticsMode)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none transition"
+                className={`w-full bg-slate-950 border rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none transition ${
+                  errors.modalidadeDevolucao ? 'border-rose-500' : 'border-slate-800'
+                }`}
               >
+                {returnMethods.length === 0 && <option value="Presencial">Presencial</option>}
                 {returnMethods.map((m) => (
                   <option key={m.id} value={m.name}>{m.name}</option>
                 ))}
               </select>
+              {errors.modalidadeDevolucao && (
+                <p className="mt-1 text-[11px] text-rose-400">{errors.modalidadeDevolucao}</p>
+              )}
             </div>
 
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
-                Prazo Limite para Devolução
+                Prazo Limite para Devolução <span className="text-rose-400">*</span>
               </label>
               <input
                 type="date"
                 value={prazoLimiteDevolucao}
                 onChange={(e) => setPrazoLimiteDevolucao(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none transition"
+                className={`w-full bg-slate-950 border rounded-xl px-3.5 py-2.5 text-sm text-slate-100 focus:border-blue-500 focus:outline-none transition ${
+                  errors.prazoLimiteDevolucao ? 'border-rose-500' : 'border-slate-800'
+                }`}
               />
+              {errors.prazoLimiteDevolucao && (
+                <p className="mt-1 text-[11px] text-rose-400">{errors.prazoLimiteDevolucao}</p>
+              )}
             </div>
           </div>
         </section>

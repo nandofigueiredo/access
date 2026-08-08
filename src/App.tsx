@@ -143,6 +143,8 @@ const AppContent: React.FC = () => {
         void itNotes;
         created = await api.createOffboarding({
           ...body,
+          emailDestinoRedirecionamento: body.emailDestinoRedirecionamento?.trim() || undefined,
+          emailDestinoArquivos: body.emailDestinoArquivos?.trim() || undefined,
           workflow,
           requesterEmail: user?.email || body.requesterEmail,
           assignedQueue: body.assignedQueue || 'Service Desk N1',

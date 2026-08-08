@@ -156,11 +156,42 @@ class OffboardingCreate(BaseModel):
     respostaAutomaticaAusencia: bool = False
     orientadoNaoManterArquivosPessoais: bool = False
     ativos: OffboardingAssetsIn
-    modalidadeDevolucao: ReturnMethod
+    # Aceita valores do catálogo (não só Presencial/Correios)
+    modalidadeDevolucao: str = Field(..., min_length=1, max_length=64)
     prazoLimiteDevolucao: date
     workflow: dict[str, Any] | None = None
     requesterEmail: EmailStr | None = None
     assignedQueue: str | None = None
+
+    @field_validator(
+        "emailDestinoRedirecionamento",
+        "emailDestinoArquivos",
+        "requesterEmail",
+        mode="before",
+    )
+    @classmethod
+    def empty_email_to_none(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    @field_validator("prazoLimiteDevolucao", mode="before")
+    @classmethod
+    def require_prazo(cls, v: Any) -> Any:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            raise ValueError("Informe o prazo limite de devolução dos ativos.")
+        return v
+
+    @field_validator("modalidadeDevolucao", mode="before")
+    @classmethod
+    def strip_modalidade(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            v = v.strip()
+        if not v:
+            raise ValueError("Informe a modalidade de devolução.")
+        return v
 
 
 class OffboardingOut(BaseModel):

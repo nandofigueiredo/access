@@ -87,9 +87,16 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   if (!res.ok) {
     const detail =
       data && typeof data === 'object' && 'detail' in data
-        ? typeof (data as { detail: unknown }).detail === 'string'
-          ? (data as { detail: string }).detail
-          : JSON.stringify((data as { detail: unknown }).detail)
+        ? Array.isArray((data as { detail: unknown }).detail)
+          ? ((data as { detail: Array<{ loc?: unknown[]; msg?: string }> }).detail)
+              .map((e) => {
+                const field = Array.isArray(e.loc) ? e.loc.filter((x) => x !== 'body').join('.') : '';
+                return field && e.msg ? `${field}: ${e.msg}` : e.msg || JSON.stringify(e);
+              })
+              .join(' | ')
+          : typeof (data as { detail: unknown }).detail === 'string'
+            ? (data as { detail: string }).detail
+            : JSON.stringify((data as { detail: unknown }).detail)
         : data
           ? JSON.stringify(data)
           : `HTTP ${res.status}`;

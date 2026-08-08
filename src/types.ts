@@ -6,7 +6,7 @@ export type WorkMode = 'Presencial' | 'Híbrido' | 'Remoto';
 export type Department = 'Financeiro' | 'RH' | 'Operações' | 'Comercial' | 'TI' | 'Jurídico' | 'Marketing' | 'Engenharia';
 export type HardwareProfile = 'Padrão Admin' | 'Padrão Avançado';
 export type PowerBiRole = 'Visualizador' | 'Criador' | 'Nenhum';
-export type ReturnLogisticsMode = 'Presencial' | 'Correios';
+export type ReturnLogisticsMode = string;
 
 export type { TicketWorkflow };
 
