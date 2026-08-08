@@ -20,4 +20,6 @@ class AuditLog(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
-    performer = relationship("User", back_populates="audit_logs", lazy="selectin")
+    performer = relationship("User", foreign_keys=[performed_by_user_id], lazy="raise", viewonly=True)
+
+    __mapper_args__ = {"eager_defaults": True}

@@ -25,11 +25,22 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    # lazy="noload": evita MissingGreenlet no flush async (backref não dispara SELECT implícito)
+    # viewonly + raise: async-safe (sem backref sync / sem lazy IO implícito)
     onboarding_requests = relationship(
-        "OnboardingRequest", back_populates="creator", lazy="noload"
+        "OnboardingRequest",
+        foreign_keys="OnboardingRequest.created_by",
+        lazy="raise",
+        viewonly=True,
     )
     offboarding_requests = relationship(
-        "OffboardingRequest", back_populates="creator", lazy="noload"
+        "OffboardingRequest",
+        foreign_keys="OffboardingRequest.created_by",
+        lazy="raise",
+        viewonly=True,
     )
-    audit_logs = relationship("AuditLog", back_populates="performer", lazy="noload")
+    audit_logs = relationship(
+        "AuditLog",
+        foreign_keys="AuditLog.performed_by_user_id",
+        lazy="raise",
+        viewonly=True,
+    )

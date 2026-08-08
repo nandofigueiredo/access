@@ -39,4 +39,6 @@ class OffboardingRequest(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    creator = relationship("User", back_populates="offboarding_requests", lazy="selectin")
+    creator = relationship("User", foreign_keys=[created_by], lazy="raise", viewonly=True)
+
+    __mapper_args__ = {"eager_defaults": True}

@@ -134,50 +134,51 @@ async def _kill_session(client: httpx.AsyncClient, base: str, settings: Settings
             continue
 
 
-def build_ticket_payload(
-    row: OnboardingRequest | OffboardingRequest,
+def build_ticket_payload_from_snapshot(
+    snap: Any,
     *,
-    kind: str,
     entity_id: int | None,
 ) -> dict[str, Any]:
-    if kind == "onboarding" and isinstance(row, OnboardingRequest):
-        name = f"[PORTAL:{row.id}] Onboarding — {row.employee_name}"
+    """snap: GlpiTicketSnapshot (evita import circular tipando como Any)."""
+    if snap.kind == "onboarding":
+        name = f"[PORTAL:{snap.portal_id}] Onboarding — {snap.employee_name}"
         content = f"""Abertura automática — Portal TI diRoma
 
-Marcador: [PORTAL:{row.id}]
-ID Portal: {row.id}
+Marcador: [PORTAL:{snap.portal_id}]
+ID Portal: {snap.portal_id}
 Tipo: Onboarding
-Colaborador: {row.employee_name}
-CPF: {row.cpf}
-E-mail pessoal: {row.personal_email}
-Cargo: {row.position}
-Departamento: {row.department}
-Gestor: {row.manager}
-Data início: {row.start_date}
-Modalidade: {row.work_mode}
-Unidade: {row.unit_location or "—"}
-Hardware: {row.hardware_profile}
-Crachá: {"Sim" if row.requires_badge else "Não"}
-Fila: {row.assigned_queue or "Service Desk N1"}
-Solicitante: {row.requester_email or "—"}
+Colaborador: {snap.employee_name}
+CPF: {snap.cpf}
+E-mail pessoal: {snap.personal_email}
+Cargo: {snap.position}
+Departamento: {snap.department}
+Gestor: {snap.manager}
+Data início: {snap.start_date}
+Modalidade: {snap.work_mode}
+Unidade: {snap.unit_location or "—"}
+Hardware: {snap.hardware_profile}
+Crachá: {"Sim" if snap.requires_badge else "Não"}
+Fila: {snap.assigned_queue or "Service Desk N1"}
+Solicitante: {snap.requester_email or "—"}
 """
-    elif kind == "offboarding" and isinstance(row, OffboardingRequest):
-        name = f"[PORTAL:{row.id}] Offboarding — {row.employee_name}"
+    elif snap.kind == "offboarding":
+        term = snap.termination_datetime.isoformat() if snap.termination_datetime else "—"
+        name = f"[PORTAL:{snap.portal_id}] Offboarding — {snap.employee_name}"
         content = f"""Abertura automática — Portal TI diRoma
 
-Marcador: [PORTAL:{row.id}]
-ID Portal: {row.id}
+Marcador: [PORTAL:{snap.portal_id}]
+ID Portal: {snap.portal_id}
 Tipo: Offboarding
-Colaborador: {row.employee_name}
-E-mail corporativo: {row.corp_email}
-Gestor: {row.manager}
-Desligamento: {row.termination_datetime.isoformat()}
-Redirecionamento e-mail: {"Sim" if row.redirect_email else "Não"}
-Transferência arquivos: {"Sim" if row.transfer_files else "Não"}
-Devolução: {row.return_method}
-Prazo devolução: {row.return_deadline or "—"}
-Fila: {row.assigned_queue or "Service Desk N1"}
-Solicitante: {row.requester_email or "—"}
+Colaborador: {snap.employee_name}
+E-mail corporativo: {snap.corp_email}
+Gestor: {snap.manager}
+Desligamento: {term}
+Redirecionamento e-mail: {"Sim" if snap.redirect_email else "Não"}
+Transferência arquivos: {"Sim" if snap.transfer_files else "Não"}
+Devolução: {snap.return_method}
+Prazo devolução: {snap.return_deadline or "—"}
+Fila: {snap.assigned_queue or "Service Desk N1"}
+Solicitante: {snap.requester_email or "—"}
 """
     else:
         raise GlpiApiError("Tipo de chamado inválido")
@@ -196,21 +197,33 @@ Solicitante: {row.requester_email or "—"}
     return {"input": input_data}
 
 
-async def create_glpi_ticket(
+def build_ticket_payload(
     row: OnboardingRequest | OffboardingRequest,
     *,
     kind: str,
+    entity_id: int | None,
+) -> dict[str, Any]:
+    from app.services.glpi_notify import snapshot_from_row
+
+    return build_ticket_payload_from_snapshot(
+        snapshot_from_row(row, kind=kind),
+        entity_id=entity_id,
+    )
+
+
+async def create_glpi_ticket_from_snapshot(
+    snap: Any,
+    *,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
-    """Cria ticket no GLPI e retorna {ok, glpiTicketNumber, ...}."""
+    """Cria ticket no GLPI a partir de snapshot plano (sem ORM)."""
     cfg = settings or get_settings()
     if not cfg.glpi_api_configured:
         return {"ok": False, "status": "skipped", "reason": "GLPI API não configurada"}
 
-    # Snapshot síncrono ANTES de qualquer await — evita MissingGreenlet após IO
     try:
-        payload = build_ticket_payload(row, kind=kind, entity_id=cfg.glpi_entity_id)
-        portal_id = str(row.id)
+        payload = build_ticket_payload_from_snapshot(snap, entity_id=cfg.glpi_entity_id)
+        portal_id = str(snap.portal_id)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "status": "failed", "error": f"Payload GLPI: {exc}"}
 
@@ -228,7 +241,6 @@ async def create_glpi_ticket(
                     "Content-Type": "application/json",
                     "Accept": "application/json",
                 }
-                # Classic: POST /Ticket  |  HL API may use /Ticket or /tickets
                 ticket_urls = [
                     f"{base.rstrip('/')}/Ticket",
                     f"{base.rstrip('/')}/Ticket/",
@@ -246,7 +258,6 @@ async def create_glpi_ticket(
                     continue
 
                 data = resp.json()
-                # formatos: {"id": 123} | [{"id":123}] | {"data":{"id":123}}
                 ticket_id = None
                 if isinstance(data, dict):
                     ticket_id = data.get("id") or (data.get("data") or {}).get("id")
@@ -272,6 +283,20 @@ async def create_glpi_ticket(
                     await _kill_session(client, base, cfg, session_token)
 
     return {"ok": False, "status": "failed", "error": last_error or "Falha desconhecida na API GLPI"}
+
+
+async def create_glpi_ticket(
+    row: OnboardingRequest | OffboardingRequest,
+    *,
+    kind: str,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    from app.services.glpi_notify import snapshot_from_row
+
+    return await create_glpi_ticket_from_snapshot(
+        snapshot_from_row(row, kind=kind),
+        settings=settings,
+    )
 
 
 async def ping_glpi_api(settings: Settings | None = None) -> dict[str, Any]:
