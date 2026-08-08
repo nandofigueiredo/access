@@ -211,12 +211,55 @@ def build_ticket_payload(
     )
 
 
+async def find_glpi_ticket_by_portal_id(
+    client: httpx.AsyncClient,
+    *,
+    base: str,
+    headers: dict[str, str],
+    portal_id: str,
+) -> str | None:
+    """Busca chamado já aberto com marcador [PORTAL:ID] (evita duplicar)."""
+    marker = f"[PORTAL:{portal_id}]"
+    # field 1 = name (título) na API clássica do GLPI
+    params = {
+        "criteria[0][field]": "1",
+        "criteria[0][searchtype]": "contains",
+        "criteria[0][value]": marker,
+        "forcedisplay[0]": "2",  # id
+        "range": "0-5",
+    }
+    urls = [
+        f"{base.rstrip('/')}/search/Ticket",
+        f"{base.rstrip('/')}/search/Ticket/",
+    ]
+    for url in urls:
+        try:
+            resp = await client.get(url, headers=headers, params=params)
+            if resp.status_code >= 400:
+                continue
+            data = resp.json()
+            # formatos: {"data":[{"2":123},...], "totalcount":N} ou lista
+            rows = data.get("data") if isinstance(data, dict) else data
+            if not rows:
+                return None
+            first = rows[0] if isinstance(rows, list) else None
+            if isinstance(first, dict):
+                tid = first.get("2") or first.get("id") or first.get("2".strip())
+                if tid is not None:
+                    return str(tid)
+            elif first is not None:
+                return str(first)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Busca GLPI por portal_id falhou em %s: %s", url, exc)
+    return None
+
+
 async def create_glpi_ticket_from_snapshot(
     snap: Any,
     *,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
-    """Cria ticket no GLPI a partir de snapshot plano (sem ORM)."""
+    """Cria ticket no GLPI a partir de snapshot plano (sem ORM). Idempotente por [PORTAL:ID]."""
     cfg = settings or get_settings()
     if not cfg.glpi_api_configured:
         return {"ok": False, "status": "skipped", "reason": "GLPI API não configurada"}
@@ -241,6 +284,24 @@ async def create_glpi_ticket_from_snapshot(
                     "Content-Type": "application/json",
                     "Accept": "application/json",
                 }
+
+                existing = await find_glpi_ticket_by_portal_id(
+                    client, base=base, headers=headers, portal_id=portal_id
+                )
+                if existing:
+                    logger.info(
+                        "GLPI já tinha ticket %s para %s — não duplica",
+                        existing,
+                        portal_id,
+                    )
+                    return {
+                        "ok": True,
+                        "status": "already_exists",
+                        "glpiTicketNumber": existing,
+                        "portalTicketId": portal_id,
+                        "apiBase": base,
+                    }
+
                 ticket_urls = [
                     f"{base.rstrip('/')}/Ticket",
                     f"{base.rstrip('/')}/Ticket/",

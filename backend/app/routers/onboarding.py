@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -20,8 +20,8 @@ from app.models.onboarding import OnboardingRequest
 from app.models.user import User
 from app.schemas import OnboardingCreate, OnboardingOut
 from app.services.audit import write_audit_log
+from app.services.glpi_after_commit import schedule_glpi_after_portal_commit
 from app.services.sanitizer import sanitize_cpf, sanitize_dict, sanitize_email, sanitize_text
-from app.services.glpi_notify import notify_glpi_on_create
 from app.utils.ids import next_ticket_id
 
 router = APIRouter(prefix="/onboarding", tags=["Onboarding"])
@@ -66,6 +66,7 @@ def _to_out(row: OnboardingRequest, creator_email: str) -> OnboardingOut:
 @router.post("", response_model=OnboardingOut, status_code=status.HTTP_201_CREATED)
 async def create_onboarding(
     payload: OnboardingCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> OnboardingOut:
@@ -153,13 +154,12 @@ async def create_onboarding(
         },
     )
 
-    glpi = await notify_glpi_on_create(db, row=row, kind="onboarding")
-    await write_audit_log(
-        db,
-        action="GLPI_NOTIFY",
+    # GLPI só depois do commit do portal
+    schedule_glpi_after_portal_commit(
+        background_tasks,
+        ticket_id=row.id,
+        kind="onboarding",
         performed_by_user_id=current_user.id,
-        target_request_id=row.id,
-        details={"result": glpi},
     )
 
     return _to_out(row, current_user.email)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -21,8 +21,8 @@ from app.models.offboarding import OffboardingRequest
 from app.models.user import User
 from app.schemas import OffboardingCreate, OffboardingOut
 from app.services.audit import write_audit_log
+from app.services.glpi_after_commit import schedule_glpi_after_portal_commit
 from app.services.sanitizer import sanitize_dict, sanitize_email, sanitize_text
-from app.services.glpi_notify import notify_glpi_on_create
 from app.utils.ids import next_ticket_id
 
 router = APIRouter(prefix="/offboarding", tags=["Offboarding"])
@@ -61,6 +61,7 @@ def _to_out(row: OffboardingRequest, creator_email: str) -> OffboardingOut:
 @router.post("", response_model=OffboardingOut, status_code=status.HTTP_201_CREATED)
 async def create_offboarding(
     payload: OffboardingCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> OffboardingOut:
@@ -150,29 +151,13 @@ async def create_offboarding(
         },
     )
 
-    glpi_number: str | None = None
-    try:
-        result = await db.execute(
-            select(OffboardingRequest).where(OffboardingRequest.id == ticket_id)
-        )
-        row = result.scalar_one()
-        glpi = await notify_glpi_on_create(db, row=row, kind="offboarding")
-        glpi_number = (glpi or {}).get("glpiTicketNumber") or None
-        await write_audit_log(
-            db,
-            action="GLPI_NOTIFY",
-            performed_by_user_id=creator_id,
-            target_request_id=ticket_id,
-            details={"result": {k: v for k, v in (glpi or {}).items() if k != "channels"}},
-        )
-    except Exception as exc:  # noqa: BLE001
-        await write_audit_log(
-            db,
-            action="GLPI_NOTIFY",
-            performed_by_user_id=creator_id,
-            target_request_id=ticket_id,
-            details={"ok": False, "error": str(exc)},
-        )
+    # GLPI só depois do commit do portal (evita órfãos quando a API falha após abrir o chamado)
+    schedule_glpi_after_portal_commit(
+        background_tasks,
+        ticket_id=ticket_id,
+        kind="offboarding",
+        performed_by_user_id=creator_id,
+    )
 
     return OffboardingOut(
         id=ticket_id,
@@ -198,7 +183,7 @@ async def create_offboarding(
         workflow=copy.deepcopy(workflow) if workflow else None,
         requesterEmail=requester_email,
         assignedQueue=assigned_queue,
-        glpiTicketNumber=glpi_number,
+        glpiTicketNumber=None,
     )
 
 
